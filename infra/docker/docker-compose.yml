@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    container_name: unilocate-postgis
+    environment:
+      POSTGRES_USER: unilocate
+      POSTGRES_PASSWORD: unilocate
+      POSTGRES_DB: unilocate
+    ports:
+      - "5432:5432"
+    volumes:
+      - unilocate_pg:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: unilocate-redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  unilocate_pg:

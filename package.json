@@ -1,0 +1,14 @@
+{
+  "name": "unilocate",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "dev:api": "pnpm --filter @unilocate/api dev",
+    "dev:admin": "pnpm --filter @unilocate/web-admin dev",
+    "dev:mgmt": "pnpm --filter @unilocate/web-mgmt dev",
+    "dev:student": "pnpm --filter @unilocate/student-app start",
+    "dev:tool": "pnpm --filter @unilocate/admin-tool start",
+    "db:up": "docker compose -f infra/docker/docker-compose.yml up -d",
+    "db:down": "docker compose -f infra/docker/docker-compose.yml down"
+  }
+}
