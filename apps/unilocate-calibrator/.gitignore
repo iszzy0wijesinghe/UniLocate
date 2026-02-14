@@ -1,0 +1,24 @@
+cat > apps/unilocate-calibrator/.gitignore <<'EOF'
+.dart_tool/
+.packages
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+android/.gradle/
+android/local.properties
+
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/App.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+
+.idea/
+.vscode/
+*.iml
+*.log
+EOF
