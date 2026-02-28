@@ -1,5 +1,6 @@
 import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
+import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 
 import LostFoundHome from "../features/lost-found/LostFoundHome";
 import ReportItem from "../features/lost-found/ReportItem";
@@ -16,10 +17,7 @@ export type LostFoundStackParamList = {
 };
 
 export type LostFoundStackScreenProps<T extends keyof LostFoundStackParamList> =
-  {
-    navigation: any;
-    route: { key: string; name: T; params: LostFoundStackParamList[T] };
-  };
+  NativeStackScreenProps<LostFoundStackParamList, T>;
 
 const Stack = createNativeStackNavigator<LostFoundStackParamList>();
 
@@ -54,4 +52,3 @@ export default function LostFoundStackNavigator() {
     </Stack.Navigator>
   );
 }
-
