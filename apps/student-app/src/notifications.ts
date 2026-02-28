@@ -46,19 +46,19 @@ export async function scheduleFinderNotification(postTitle: string) {
 }
 
 // Schedule owner reminder (3 days later)
-export async function scheduleOwnerReminderNotification(postTitle: string) {
-  if (Platform.OS === "web") {
-    // Web cannot schedule delayed notifications
-    console.warn("Reminder notifications are not supported on web");
-  } else {
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: "Lost item reminder",
-        body: `Do you still need help finding "${postTitle}"?`,
-      },
-      trigger: {
-        seconds: 3 * 24 * 60 * 60, // 3 days
-      },
-    });
-  }
-}
+// export async function scheduleOwnerReminderNotification(postTitle: string) {
+//   if (Platform.OS === "web") {
+//     // Web cannot schedule delayed notifications
+//     console.warn("Reminder notifications are not supported on web");
+//   } else {
+//     await Notifications.scheduleNotificationAsync({
+//       content: {
+//         title: "Lost item reminder",
+//         body: `Do you still need help finding "${postTitle}"?`,
+//       },
+//       trigger: {
+//         seconds: 3 * 24 * 60 * 60, // 3 days
+//       },
+//     });
+//   }
+// }
