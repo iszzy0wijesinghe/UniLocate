@@ -2,7 +2,7 @@ import React from "react";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 
 import Home from "../features/home/Home";
-import LostFoundHome from "../features/lost-found/LostFoundHome";
+import LostFoundStackNavigator from "./LostFoundStack";
 import ComplaintsHome from "../features/complaints/ComplaintsHome";
 import Settings from "../features/settings/Settings";
 
@@ -21,7 +21,7 @@ export default function MainTabs() {
       <Tab.Screen name="Home" component={Home} options={{ title: "Home" }} />
       <Tab.Screen
         name="LostFound"
-        component={LostFoundHome}
+        component={LostFoundStackNavigator}
         options={{ title: "Lost & Found" }}
       />
       <Tab.Screen
