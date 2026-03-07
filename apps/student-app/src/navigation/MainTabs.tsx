@@ -17,18 +17,13 @@ const Tab = createBottomTabNavigator<MainTabParamList>();
 
 export default function MainTabs() {
   return (
-    <Tab.Navigator screenOptions={{ headerShown: true }}>
+    <Tab.Navigator id="main-tabs" screenOptions={{ headerShown: true }}>
       <Tab.Screen name="Home" component={Home} options={{ title: "Home" }} />
-
       <Tab.Screen
         name="LostFound"
         component={LostFoundStackNavigator}
-        options={{
-          title: "Lost & Found",
-          headerShown: false, // important: let the stack handle headers
-        }}
+        options={{ title: "Lost & Found" }}
       />
-
       <Tab.Screen
         name="Complaints"
         component={ComplaintsHome}
