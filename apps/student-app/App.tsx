@@ -1,11 +1,10 @@
-import React, { useEffect } from "react";
+import React from "react";
 import RootNavigator from "./src/navigation/RootNavigator";
-import { ensureNotificationPermissions } from "./src/notifications";
 
 export default function App() {
-  useEffect(() => {
-    ensureNotificationPermissions();
-  }, []);
-
-  return <RootNavigator />;
+  return (
+    <NavigationContainer>
+      <MainTabs />
+    </NavigationContainer>
+  );
 }

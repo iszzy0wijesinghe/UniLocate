@@ -17,10 +17,10 @@ import type {
 } from "../../navigation/LostFoundStack";
 import {
   createLostFoundPost,
+  deleteLostFoundPost,
   getMockLocationTrail,
   type ItemCategory,
 } from "./lostFound.api";
-import { scheduleOwnerReminderNotification } from "../../notifications";
 
 type ReportRoute = RouteProp<LostFoundStackParamList, "ReportItem">;
 type Navigation = LostFoundStackScreenProps<"ReportItem">["navigation"];
@@ -34,8 +34,6 @@ const categories: ItemCategory[] = [
   "Device",
   "Other",
 ];
-
-const API_URL = "http://localhost:3000/lost-found/posts"; // Update with your API endpoint
 
 export default function ReportItem() {
   const route = useRoute<ReportRoute>();
@@ -79,15 +77,6 @@ export default function ReportItem() {
 
       setCreatedPostId(post.id); // Save created post ID
 
-      // Schedule reminder notification
-      if (title.trim()) {
-        if (Platform.OS === "web") {
-          console.warn("Reminder notifications are not supported on web");
-        } else {
-          await scheduleOwnerReminderNotification(title.trim());
-        }
-      }
-
       setSubmitted(true);
 
       setTimeout(() => {
@@ -104,7 +93,7 @@ export default function ReportItem() {
   const handleCollectedItem = async () => {
     if (!createdPostId) return;
     try {
-      await fetch(`${API_URL}/${createdPostId}`, { method: "DELETE" });
+      await deleteLostFoundPost(createdPostId);
       setSubmitted(true);
       setCreatedPostId(null);
     } catch (err) {
@@ -307,7 +296,7 @@ export default function ReportItem() {
             <Text style={styles.label}>Description (optional)</Text>
             <TextInput
               style={[styles.input, styles.multilineInput]}
-              multiline
+              multiline={true}
               numberOfLines={4}
               placeholder={
                 "Add marks, colors, or other details to help others recognise your item."

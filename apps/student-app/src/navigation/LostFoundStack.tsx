@@ -25,7 +25,13 @@ const Stack = createNativeStackNavigator<LostFoundStackParamList>();
 
 export default function LostFoundStackNavigator() {
   return (
-    <Stack.Navigator>
+    <Stack.Navigator
+      id="lost-found-stack"
+      screenOptions={{
+        headerShown: true,
+        gestureEnabled: true,
+      }}
+    >
       <Stack.Screen
         name="LostFoundHome"
         component={LostFoundHome}
