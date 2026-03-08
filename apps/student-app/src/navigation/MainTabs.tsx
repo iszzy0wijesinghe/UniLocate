@@ -5,6 +5,7 @@ import Home from "../features/home/Home";
 import LostFoundStackNavigator from "./LostFoundStack";
 import ComplaintsHome from "../features/complaints/ComplaintsHome";
 import Settings from "../features/settings/Settings";
+import CustomTabBar from "./CustomTabBar";
 
 export type MainTabParamList = {
   Home: undefined;
@@ -17,23 +18,16 @@ const Tab = createBottomTabNavigator<MainTabParamList>();
 
 export default function MainTabs() {
   return (
-    <Tab.Navigator id="main-tabs" screenOptions={{ headerShown: true }}>
-      <Tab.Screen name="Home" component={Home} options={{ title: "Home" }} />
-      <Tab.Screen
-        name="LostFound"
-        component={LostFoundStackNavigator}
-        options={{ title: "Lost & Found" }}
-      />
-      <Tab.Screen
-        name="Complaints"
-        component={ComplaintsHome}
-        options={{ title: "Complaints" }}
-      />
-      <Tab.Screen
-        name="Settings"
-        component={Settings}
-        options={{ title: "Settings" }}
-      />
+    <Tab.Navigator
+      screenOptions={{
+        headerShown: false,
+      }}
+      tabBar={(props) => <CustomTabBar {...props} />}
+    >
+      <Tab.Screen name="Home" component={Home} />
+      <Tab.Screen name="LostFound" component={LostFoundStackNavigator} />
+      <Tab.Screen name="Complaints" component={ComplaintsHome} />
+      <Tab.Screen name="Settings" component={Settings} />
     </Tab.Navigator>
   );
 }
