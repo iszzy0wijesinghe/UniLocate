@@ -7,9 +7,12 @@ import {
   TextInput,
   ScrollView,
   Platform,
+  Alert,
 } from "react-native";
 import { RouteProp, useNavigation, useRoute } from "@react-navigation/native";
-import DateTimePicker from "@react-native-community/datetimepicker";
+import DateTimePicker, {
+  DateTimePickerAndroid,
+} from "@react-native-community/datetimepicker";
 
 import type {
   LostFoundStackParamList,
@@ -75,7 +78,7 @@ export default function ReportItem() {
         images: [imageUrl1, imageUrl2].filter((u) => u.trim().length > 0),
       });
 
-      setCreatedPostId(post.id); // Save created post ID
+      setCreatedPostId(post.id); 
 
       setSubmitted(true);
 
@@ -84,6 +87,10 @@ export default function ReportItem() {
       }, 800);
     } catch (err) {
       console.error(err);
+      Alert.alert(
+        "Could not post item",
+        (err as Error).message || "Network error. Start the API with: pnpm -C apps/api dev"
+      );
     } finally {
       setSubmitting(false);
     }
@@ -108,6 +115,41 @@ export default function ReportItem() {
       setApproxDateTime(selected);
       setTimeHint(selected.toLocaleString());
     }
+  };
+
+  const openAndroidDateTimePicker = () => {
+    const base = approxDateTime ?? new Date();
+
+    DateTimePickerAndroid.open({
+      value: base,
+      mode: "date",
+      is24Hour: true,
+      onChange: (event: any, selectedDate?: Date) => {
+        if (event?.type === "dismissed" || !selectedDate) return;
+
+        const withDate = new Date(base);
+        withDate.setFullYear(
+          selectedDate.getFullYear(),
+          selectedDate.getMonth(),
+          selectedDate.getDate()
+        );
+
+        DateTimePickerAndroid.open({
+          value: withDate,
+          mode: "time",
+          is24Hour: true,
+          onChange: (event2: any, selectedTime?: Date) => {
+            if (event2?.type === "dismissed" || !selectedTime) return;
+
+            const final = new Date(withDate);
+            final.setHours(selectedTime.getHours(), selectedTime.getMinutes(), 0, 0);
+
+            setApproxDateTime(final);
+            setTimeHint(final.toLocaleString());
+          },
+        });
+      },
+    });
   };
 
   if (submitted)
@@ -210,6 +252,15 @@ export default function ReportItem() {
                   setTimeHint(selected.toLocaleString());
                 }}
               />
+            ) : Platform.OS === "android" ? (
+              <TouchableOpacity
+                style={styles.input}
+                onPress={openAndroidDateTimePicker}
+              >
+                <Text style={{ color: timeHint ? "#111827" : "#9ca3af" }}>
+                  {timeHint || "Select date & time from calendar"}
+                </Text>
+              </TouchableOpacity>
             ) : (
               <TouchableOpacity
                 style={styles.input}

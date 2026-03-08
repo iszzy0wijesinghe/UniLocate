@@ -29,7 +29,6 @@ export default function LostFoundStackNavigator() {
       id="lost-found-stack"
       screenOptions={{
         headerShown: true,
-        gestureEnabled: true,
       }}
     >
       <Stack.Screen

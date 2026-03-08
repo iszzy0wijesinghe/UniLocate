@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
+import { API_BASE_URL } from "../../services/api/baseUrl";
 export type LostFoundType = "lost" | "found";
 
 export type ItemCategory = "ID Card" | "Wallet" | "Book" | "Device" | "Other";
@@ -15,7 +16,28 @@ export interface LostFoundPost {
   status: "open" | "resolved";
 }
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
+const API_URL = API_BASE_URL;
+const FETCH_TIMEOUT_MS = 15_000;
+
+async function fetchWithTimeout(
+  url: string,
+  opts: RequestInit & { timeout?: number } = {}
+): Promise<Response> {
+  const { timeout = FETCH_TIMEOUT_MS, ...fetchOpts } = opts;
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const res = await fetch(url, { ...fetchOpts, signal: controller.signal });
+    clearTimeout(id);
+    return res;
+  } catch (e) {
+    clearTimeout(id);
+    if ((e as Error).name === "AbortError") {
+      throw new Error("Request timed out. Is the API running? Start it with: pnpm -C apps/api dev");
+    }
+    throw e;
+  }
+}
 
 export interface LostFoundPostSummary extends LostFoundPost {
   relativeTime: string;
@@ -40,11 +62,11 @@ export function useLostFoundPosts() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = React.useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch(`${API_URL}/lost-found/posts`);
+      const res = await fetchWithTimeout(`${API_URL}/lost-found/posts`);
       const json = (await res.json()) as LostFoundPost[];
       setPosts(json.map(toSummary));
     } catch (e) {
@@ -52,11 +74,11 @@ export function useLostFoundPosts() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
 
   return { posts, loading, error, refetch: load };
 }
@@ -64,19 +86,19 @@ export function useLostFoundPosts() {
 export async function createLostFoundPost(
   input: Omit<LostFoundPost, "id" | "createdAt" | "status">
 ): Promise<LostFoundPost> {
-  const res = await fetch(`${API_URL}/lost-found/posts`, {
+  const res = await fetchWithTimeout(`${API_URL}/lost-found/posts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
   if (!res.ok) {
-    throw new Error("Failed to create post");
+    throw new Error("Failed to create post. Make sure the API is running (pnpm -C apps/api dev).");
   }
   return (await res.json()) as LostFoundPost;
 }
 
 export async function getPostDetails(id: string): Promise<LostFoundPostSummary> {
-  const res = await fetch(`${API_URL}/lost-found/posts/${id}`);
+  const res = await fetchWithTimeout(`${API_URL}/lost-found/posts/${id}`);
   if (!res.ok) {
     throw new Error("Post not found");
   }
@@ -85,7 +107,7 @@ export async function getPostDetails(id: string): Promise<LostFoundPostSummary> 
 }
 
 export async function resolvePost(id: string): Promise<LostFoundPost> {
-  const res = await fetch(`${API_URL}/lost-found/posts/${id}/resolve`, {
+  const res = await fetchWithTimeout(`${API_URL}/lost-found/posts/${id}/resolve`, {
     method: "POST",
   });
   if (!res.ok) {
@@ -93,6 +115,15 @@ export async function resolvePost(id: string): Promise<LostFoundPost> {
   }
   return (await res.json()) as LostFoundPost;
 }
+
+export const deleteLostFoundPost = async (id: string): Promise<void> => {
+  const res = await fetchWithTimeout(`${API_URL}/lost-found/posts/${id}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    throw new Error("Failed to delete post");
+  }
+};
 
 export function getMockLocationTrail(): LocationTrailPoint[] {
   return [
