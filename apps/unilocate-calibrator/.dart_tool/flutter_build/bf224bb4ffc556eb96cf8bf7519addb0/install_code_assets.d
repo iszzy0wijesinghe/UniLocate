@@ -1,0 +1,1 @@
+ /Users/isinduwijesinghe/Documents/UniLocatedocs/campus_calibrator/campus_calibrator/.dart_tool/flutter_build/bf224bb4ffc556eb96cf8bf7519addb0/native_assets.json: 
