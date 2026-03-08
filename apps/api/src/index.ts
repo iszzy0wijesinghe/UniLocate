@@ -27,6 +27,23 @@ app.get("/zones", async (_req: Request, res: Response) => {
   res.json(rows);
 });
 
+app.get("/boundary", async (_req: Request, res: Response) => {
+  const { rows } = await pool.query(
+    `
+    SELECT id, name, polygon_geojson
+    FROM boundaries
+    ORDER BY id ASC
+    LIMIT 1
+    `
+  );
+
+  if (rows.length === 0) {
+    return res.status(404).json({ message: "No campus boundary found" });
+  }
+
+  res.json(rows[0]);
+});
+
 // 2) Send a location event
 const LocationEventSchema = z.object({
   userId: z.string().min(1),

@@ -1,3 +1,5 @@
+/** @format */
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Dimensions,
@@ -10,41 +12,23 @@ import {
   View,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import CampusMap2D from "./components/CampusMap2D";
+import CampusMap2D, {
+  type CampusBoundary,
+  type CampusZone,
+} from "./components/CampusMap2D";
+import { useLiveLocation } from "../../services/geo/useLiveLocation";
+import {
+  fetchBoundary,
+  fetchZones,
+  type Boundary,
+  type Zone,
+} from "../../services/api/unilocateApi";
 
 const { width, height } = Dimensions.get("window");
 
 const chips = ["Bird Nest", "Basement Canteen", "Anohana Canteen"];
 
-const mockZones = [
-  {
-    id: "library",
-    name: "Library",
-    x: 420,
-    y: 260,
-    width: 220,
-    height: 140,
-    crowd: "medium" as const,
-  },
-  {
-    id: "study_a",
-    name: "Study Area A",
-    x: 760,
-    y: 460,
-    width: 240,
-    height: 150,
-    crowd: "high" as const,
-  },
-  {
-    id: "canteen",
-    name: "Main Canteen",
-    x: 210,
-    y: 650,
-    width: 250,
-    height: 140,
-    crowd: "low" as const,
-  },
-];
+
 
 function getGreeting(date: Date) {
   const hour = date.getHours();
@@ -68,10 +52,89 @@ function formatTime(date: Date) {
   });
 }
 
+function convertBackendZones(zones: Zone[]): CampusZone[] {
+  return zones
+    .filter((zone) => zone.id !== "zone_test_1")
+    .map((zone) => {
+      let coords: unknown;
+
+      if (zone.polygon_geojson?.type === "Polygon") {
+        coords = zone.polygon_geojson.coordinates?.[0];
+      } else if (zone.polygon_geojson?.type === "MultiPolygon") {
+        coords = zone.polygon_geojson.coordinates?.[0]?.[0];
+      }
+
+      if (!Array.isArray(coords)) return null;
+
+      const polygon = coords
+        .map((point: unknown) => {
+          if (!Array.isArray(point) || point.length < 2) return null;
+
+          const lng = Number(point[0]);
+          const lat = Number(point[1]);
+
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+          return { lat, lng };
+        })
+        .filter(Boolean) as { lat: number; lng: number }[];
+
+      if (polygon.length < 3) return null;
+
+      return {
+        id: zone.id,
+        name: zone.name,
+        type: zone.type,
+        polygon,
+      };
+    })
+    .filter(Boolean) as CampusZone[];
+}
+
+function convertBoundary(boundary: Boundary): CampusBoundary | null {
+  let coords: unknown;
+
+  if (boundary.polygon_geojson?.type === "Polygon") {
+    coords = boundary.polygon_geojson.coordinates?.[0];
+  } else if (boundary.polygon_geojson?.type === "MultiPolygon") {
+    coords = boundary.polygon_geojson.coordinates?.[0]?.[0];
+  }
+
+  if (!Array.isArray(coords)) return null;
+
+  const polygon = coords
+    .map((point: unknown) => {
+      if (!Array.isArray(point) || point.length < 2) return null;
+
+      const lng = Number(point[0]);
+      const lat = Number(point[1]);
+
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+      return { lat, lng };
+    })
+    .filter(Boolean) as { lat: number; lng: number }[];
+
+  if (polygon.length < 3) return null;
+
+  return {
+    id: boundary.id,
+    name: boundary.name,
+    polygon,
+  };
+}
+
 export default function Home() {
   const [selectedChip, setSelectedChip] = useState("Bird Nest");
-  const [selectedZone, setSelectedZone] = useState<string | null>(null);
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   const [now, setNow] = useState(new Date());
+  const [zones, setZones] = useState<CampusZone[]>([]);
+  const [boundary, setBoundary] = useState<CampusBoundary | null>(null);
+  const [zonesStatus, setZonesStatus] = useState("Loading map...");
+  const [zonesError, setZonesError] = useState("");
+  const [mapRefreshKey, setMapRefreshKey] = useState(0);
+
+  const { point } = useLiveLocation();
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -85,9 +148,26 @@ export default function Home() {
     };
   }, []);
 
+  useEffect(() => {
+    Promise.all([fetchZones(), fetchBoundary()])
+      .then(([zoneData, boundaryData]) => {
+        const convertedZones = convertBackendZones(zoneData);
+        const convertedBoundary = convertBoundary(boundaryData);
+
+        setZones(convertedZones);
+        setBoundary(convertedBoundary);
+        setZonesStatus(`${convertedZones.length} zones loaded`);
+      })
+      .catch((err) => {
+        console.error(err);
+        setZonesError(err.message || "Failed to load map");
+        setZonesStatus("Map loading failed");
+      });
+  }, []);
+
   const selectedZoneData = useMemo(
-    () => mockZones.find((z) => z.id === selectedZone) ?? null,
-    [selectedZone]
+    () => zones.find((z) => z.id === selectedZoneId) ?? null,
+    [selectedZoneId, zones],
   );
 
   const topSafeSpace = Math.max(34, height * 0.045);
@@ -96,20 +176,36 @@ export default function Home() {
   return (
     <View style={styles.screen}>
       <CampusMap2D
-        zones={mockZones}
+        key={mapRefreshKey}
+        zones={zones}
+        boundary={boundary}
+        userLocation={point ? { lat: point.lat, lng: point.lng } : null}
+        selectedZoneId={selectedZoneId}
         onZonePress={(zone) => {
-          setSelectedZone(zone.id);
+          setSelectedZoneId(zone?.id ?? null);
+        }}
+        onLocateMePress={() => {
+          setSelectedZoneId(null);
+          setMapRefreshKey((prev) => prev + 1);
         }}
       />
 
       <LinearGradient
-        colors={["rgba(243,246,250,1)", "rgba(243,246,250,0.90)", "transparent"]}
+        colors={[
+          "rgba(243,246,250,1)",
+          "rgba(243,246,250,0.90)",
+          "transparent",
+        ]}
         style={styles.topFade}
         pointerEvents="none"
       />
 
       <LinearGradient
-        colors={["transparent", "rgba(243,246,250,0.90)", "rgba(243,246,250,1)"]}
+        colors={[
+          "transparent",
+          "rgba(243,246,250,0.90)",
+          "rgba(243,246,250,1)",
+        ]}
         style={styles.bottomFade}
         pointerEvents="none"
       />
@@ -138,8 +234,7 @@ export default function Home() {
             left: sideSpace,
             right: sideSpace,
           },
-        ]}
-      >
+        ]}>
         <View style={styles.topRow}>
           <View style={styles.userBlock}>
             <Text style={styles.greeting}>{getGreeting(now)}</Text>
@@ -179,17 +274,16 @@ export default function Home() {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chipsRow}
-        >
+          contentContainerStyle={styles.chipsRow}>
           {chips.map((chip) => {
             const active = chip === selectedChip;
             return (
               <Pressable
                 key={chip}
                 onPress={() => setSelectedChip(chip)}
-                style={[styles.chip, active && styles.chipActive]}
-              >
-                <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                style={[styles.chip, active && styles.chipActive]}>
+                <Text
+                  style={[styles.chipText, active && styles.chipTextActive]}>
                   {chip}
                 </Text>
               </Pressable>
@@ -203,14 +297,14 @@ export default function Home() {
 
       <View style={styles.bottomInfo}>
         <Text style={styles.internetHint}>
-          For Real-time Map Please Maintain Good Internet Connection
+          {zonesError ? zonesError : zonesStatus}
         </Text>
 
         {selectedZoneData ? (
           <View style={styles.zonePopup}>
             <Text style={styles.zonePopupTitle}>{selectedZoneData.name}</Text>
             <Text style={styles.zonePopupText}>
-              Crowd level: {selectedZoneData.crowd}
+              Type: {selectedZoneData.type}
             </Text>
           </View>
         ) : null}
@@ -396,15 +490,15 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    height: 270,
+    height: 370,
     zIndex: 5,
   },
   bottomFade: {
     position: "absolute",
     left: 0,
     right: 0,
-    bottom: 72,
-    height: 190,
+    bottom: 0,
+    height: 170,
     zIndex: 5,
   },
   leftFade: {
