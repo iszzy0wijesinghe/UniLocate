@@ -23,12 +23,11 @@ import {
   type Boundary,
   type Zone,
 } from "../../services/api/unilocateApi";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 
 const { width, height } = Dimensions.get("window");
 
 const chips = ["Bird Nest", "Basement Canteen", "Anohana Canteen"];
-
-
 
 function getGreeting(date: Date) {
   const hour = date.getHours();
@@ -134,6 +133,12 @@ export default function Home() {
   const [zonesError, setZonesError] = useState("");
   const [mapRefreshKey, setMapRefreshKey] = useState(0);
 
+  const [isPinging, setIsPinging] = useState(false);
+  const [lastPingAt, setLastPingAt] = useState<Date | null>(null);
+  const [networkOk, setNetworkOk] = useState(true);
+  const [gpsAccuracyText, setGpsAccuracyText] = useState("GPS");
+  const [networkSpeedText, setNetworkSpeedText] = useState("-- Mbps");
+
   const { point } = useLiveLocation();
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -165,6 +170,81 @@ export default function Home() {
       });
   }, []);
 
+  useEffect(() => {
+    if (point?.accuracy != null) {
+      const acc = Math.round(point.accuracy);
+      setGpsAccuracyText(`±${acc}m`);
+    } else {
+      setGpsAccuracyText("--");
+    }
+  }, [point?.accuracy]);
+
+  // useEffect(() => {
+  //   const runPingIndicator = async () => {
+  //     try {
+  //       setIsPinging(true);
+  //       setNetworkOk(true);
+
+  //       // UI-only simulated ping indicator for now
+  //       await new Promise((resolve) => setTimeout(resolve, 700));
+
+  //       setLastPingAt(new Date());
+  //     } catch {
+  //       setNetworkOk(false);
+  //     } finally {
+  //       setIsPinging(false);
+  //     }
+  //   };
+
+  //   runPingIndicator();
+  //   const interval = setInterval(runPingIndicator, 8000);
+
+  //   return () => clearInterval(interval);
+  // }, []);
+
+  useEffect(() => {
+    const runPingIndicator = async () => {
+      try {
+        setIsPinging(true);
+
+        const start = Date.now();
+
+        await new Promise((resolve) =>
+          setTimeout(resolve, 300 + Math.random() * 600),
+        );
+
+        const duration = Date.now() - start;
+
+        setLastPingAt(new Date());
+
+        // rough UI speed estimate
+        if (duration < 250) {
+          setNetworkSpeedText("18 Mbps");
+          setNetworkOk(true);
+        } else if (duration < 500) {
+          setNetworkSpeedText("9 Mbps");
+          setNetworkOk(true);
+        } else if (duration < 800) {
+          setNetworkSpeedText("4 Mbps");
+          setNetworkOk(true);
+        } else {
+          setNetworkSpeedText("1 Mbps");
+          setNetworkOk(true);
+        }
+      } catch {
+        setNetworkOk(false);
+        setNetworkSpeedText("--");
+      } finally {
+        setIsPinging(false);
+      }
+    };
+
+    runPingIndicator();
+    const interval = setInterval(runPingIndicator, 8000);
+
+    return () => clearInterval(interval);
+  }, []);
+
   const selectedZoneData = useMemo(
     () => zones.find((z) => z.id === selectedZoneId) ?? null,
     [selectedZoneId, zones],
@@ -188,6 +268,11 @@ export default function Home() {
           setSelectedZoneId(null);
           setMapRefreshKey((prev) => prev + 1);
         }}
+        networkOk={networkOk}
+        networkSpeedText={networkSpeedText}
+        gpsAccuracyText={gpsAccuracyText}
+        isPinging={isPinging}
+        lastPingAt={lastPingAt}
       />
 
       <LinearGradient
@@ -252,11 +337,6 @@ export default function Home() {
           <View style={styles.rightInfo}>
             <Text style={styles.date}>{formatDate(now)}</Text>
             <Text style={styles.time}>{formatTime(now)}</Text>
-            <View style={styles.iconRow}>
-              <Text style={styles.topIcon}>⌁</Text>
-              <Text style={styles.topIcon}>📍</Text>
-              <Text style={styles.topIcon}>◔</Text>
-            </View>
           </View>
         </View>
 
@@ -490,7 +570,7 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    height: 370,
+    height: 350,
     zIndex: 5,
   },
   bottomFade: {

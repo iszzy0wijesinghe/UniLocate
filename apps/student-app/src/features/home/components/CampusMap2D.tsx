@@ -1,6 +1,7 @@
 /** @format */
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import {
   LayoutChangeEvent,
   Pressable,
@@ -41,6 +42,11 @@ type Props = {
   selectedZoneId?: string | null;
   onZonePress?: (zone: CampusZone | null) => void;
   onLocateMePress?: () => void;
+  networkOk?: boolean;
+  gpsAccuracyText?: string;
+  isPinging?: boolean;
+  lastPingAt?: Date | null;
+  networkSpeedText?: string;
 };
 
 const MIN_SCALE = 1.0;
@@ -118,6 +124,12 @@ export default function CampusMap2D({
   selectedZoneId,
   onZonePress,
   onLocateMePress,
+  networkOk = true,
+  networkSpeedText = "-- Mbps",
+  gpsAccuracyText = "--",
+  isPinging = false,
+  lastPingAt = null,
+  
 }: Props) {
   const [layout, setLayout] = useState({ width: 0, height: 0 });
   const [scale, setScale] = useState(DEFAULT_USER_FOCUS_SCALE);
@@ -568,6 +580,49 @@ export default function CampusMap2D({
         </Svg>
       </View>
 
+      <View style={styles.mapStatusPanel}>
+        <View style={styles.mapStatusRow}>
+          <View style={styles.mapStatusItem}>
+            <Ionicons
+              name={networkOk ? "wifi" : "wifi-outline"}
+              size={15}
+              color={networkOk ? "#FF7100" : "#9CA3AF"}
+            />
+            <Text style={styles.mapStatusText}>
+              {networkOk ? networkSpeedText : "Offline"}
+            </Text>
+          </View>
+
+          <View style={styles.mapStatusItem}>
+            <MaterialCommunityIcons
+              name="crosshairs-gps"
+              size={15}
+              color="#FF7100"
+            />
+            <Text style={styles.mapStatusText}>{gpsAccuracyText}</Text>
+          </View>
+        </View>
+
+        <View style={styles.mapStatusItem}>
+          <Ionicons
+            name={isPinging ? "sync" : "radio-button-on"}
+            size={15}
+            color={isPinging ? "#FF7100" : "#10B981"}
+          />
+          <Text style={styles.mapStatusText}>
+            {isPinging
+              ? "Refreshing..."
+              : lastPingAt
+                ? `Updated ${lastPingAt.toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  })}`
+                : "Waiting..."}
+          </Text>
+        </View>
+      </View>
+
       <View style={styles.controls}>
         <Pressable style={styles.controlButton} onPress={zoomInAction}>
           <Text style={styles.controlText}>＋</Text>
@@ -636,5 +691,39 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "800",
     color: "#4285F4",
+  },
+  mapStatusPanel: {
+    position: "absolute",
+    top: 250,
+    right: 14,
+    gap: 6,
+    zIndex: 60,
+  },
+
+  mapStatusRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 6,
+  },
+
+  mapStatusItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(255,255,255,0.94)",
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+
+  mapStatusText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#6B7280",
   },
 });
