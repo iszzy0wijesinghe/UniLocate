@@ -12,3 +12,180 @@ model Campus {
   boundary  Json
   createdAt DateTime @default(now())
 }
+
+enum ComplaintCategory {
+  RAGGING
+  HARASSMENT
+  MENTAL_HEALTH
+  DISCRIMINATION
+  LECTURER_BEHAVIOR
+  OTHER
+}
+
+enum ComplaintSeverity {
+  LOW
+  MED
+  HIGH
+  CRITICAL
+}
+
+enum ComplaintStatus {
+  NEW
+  IN_REVIEW
+  NEED_MORE_INFO
+  ACTION_TAKEN
+  CLOSED
+}
+
+enum MessageSenderType {
+  STUDENT
+  STAFF
+  COUNSELOR
+}
+
+enum AssignmentTeam {
+  GRIEVANCE
+  DISCIPLINE
+  COUNSELING
+}
+
+enum StaffRole {
+  GRIEVANCE
+  DISCIPLINE
+  COUNSELOR
+  SUPER_ADMIN
+}
+
+enum AttachmentScanStatus {
+  PENDING
+  CLEAN
+  FLAGGED
+}
+
+model Case {
+  id                  String                 @id @default(uuid())
+  anonId              String                 @unique
+  secretHash          String
+  title               String
+  category            ComplaintCategory
+  description         String
+  severity            ComplaintSeverity
+  status              ComplaintStatus        @default(NEW)
+  locationPoint       Unsupported("geography(Point, 4326)")?
+  locationText        String?
+  incidentAt          DateTime?
+  peopleInvolved      String?
+  counselingRequested Boolean                @default(false)
+  identityDisclosed   Boolean                @default(false)
+  captchaRequired     Boolean                @default(false)
+  optionalContactInfo Json?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+  messages            Message[]
+  attachments         Attachment[]
+  assignments         Assignment[]
+  auditLogs           AuditLog[]
+  disclosures         IdentityDisclosure[]
+  internalNotes       InternalNote[]
+
+  @@map("cases")
+}
+
+model Message {
+  id         String            @id @default(uuid())
+  caseId     String
+  senderType MessageSenderType
+  body       String
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+  case       Case              @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  attachments Attachment[]
+
+  @@map("messages")
+}
+
+model Attachment {
+  id           String    @id @default(uuid())
+  caseId       String
+  messageId    String?
+  storageKey   String
+  mimeType     String
+  sizeBytes    Int
+  originalName String
+  scanStatus   AttachmentScanStatus   @default(PENDING)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  case         Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  message      Message?  @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@map("attachments")
+}
+
+model Assignment {
+  id               String         @id @default(uuid())
+  caseId           String
+  assignedToUserId String
+  assignedTeam     AssignmentTeam
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  case             Case           @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  assignedToUser   StaffUser      @relation(fields: [assignedToUserId], references: [id], onDelete: Cascade)
+
+  @@map("assignments")
+}
+
+model StaffUser {
+  id           String       @id @default(uuid())
+  email        String       @unique
+  passwordHash String
+  role         StaffRole
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  assignments  Assignment[]
+  auditLogs    AuditLog[]
+  internalNotes InternalNote[]
+
+  @@map("staff_users")
+}
+
+model AuditLog {
+  id          String    @id @default(uuid())
+  actorUserId String?
+  action      String
+  caseId      String?
+  meta        Json
+  ipAddress   String?
+  createdAt   DateTime  @default(now())
+  actorUser   StaffUser? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  case        Case?     @relation(fields: [caseId], references: [id], onDelete: SetNull)
+
+  @@map("audit_logs")
+}
+
+model IdentityDisclosure {
+  id        String   @id @default(uuid())
+  caseId     String
+  name      String?
+  phone     String?
+  email     String?
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  case      Case     @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@map("identity_disclosures")
+}
+
+model InternalNote {
+  id           String    @id @default(uuid())
+  caseId       String
+  authorUserId String
+  body         String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  case         Case      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  authorUser   StaffUser @relation(fields: [authorUserId], references: [id], onDelete: Cascade)
+
+  @@map("internal_notes")
+}
