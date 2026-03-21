@@ -1,23 +1,19 @@
 import React, { useEffect, useState } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  Image,
-  ScrollView,
-} from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView } from "react-native";
+import { RouteProp, useNavigation, useRoute } from "@react-navigation/native";
 
-import type { LostFoundStackScreenProps } from "../../navigation/LostFoundStack";
-import {
-  getPostDetails,
-  resolvePost,
-  type LostFoundPostSummary,
-} from "./lostFound.api";
+import type {
+  LostFoundStackParamList,
+  LostFoundStackScreenProps,
+} from "../../navigation/LostFoundStack";
+import { getPostDetails, resolvePost, type LostFoundPostSummary } from "./lostFound.api";
 
-type Props = LostFoundStackScreenProps<"ItemDetails">;
+type DetailsRoute = RouteProp<LostFoundStackParamList, "ItemDetails">;
+type Navigation = LostFoundStackScreenProps<"ItemDetails">["navigation"];
 
-export default function ItemDetails({ route, navigation }: Props) {
+export default function ItemDetails() {
+  const route = useRoute<DetailsRoute>();
+  const navigation = useNavigation<Navigation>();
   const [post, setPost] = useState<LostFoundPostSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -85,8 +81,8 @@ export default function ItemDetails({ route, navigation }: Props) {
         <Text style={styles.sectionTitle}>If you found this item</Text>
         <Text style={styles.bodyText}>
           Use the secure in-app chat to contact the owner without sharing your
-          phone number or email. Describe where you found the item and ask proof
-          questions (colour, marks, contents) to confirm ownership.
+          phone number or email. Describe where you found the item and ask
+          proof questions (colour, marks, contents) to confirm ownership.
         </Text>
       </View>
 
@@ -102,7 +98,6 @@ export default function ItemDetails({ route, navigation }: Props) {
         >
           <Text style={styles.secondaryButtonText}>I found this item</Text>
         </TouchableOpacity>
-
         <TouchableOpacity
           style={[styles.footerButton, styles.primaryButton]}
           onPress={async () => {
@@ -110,7 +105,7 @@ export default function ItemDetails({ route, navigation }: Props) {
               await resolvePost(post.id);
               navigation.goBack();
             } catch {
-              // optionally show an error toast/snackbar
+              // Optionally show an error toast
             }
           }}
         >
@@ -221,3 +216,4 @@ const styles = StyleSheet.create({
     backgroundColor: "#e5e7eb",
   },
 });
+

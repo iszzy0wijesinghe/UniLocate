@@ -1,6 +1,5 @@
 import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 
 import LostFoundHome from "../features/lost-found/LostFoundHome";
 import ReportItem from "../features/lost-found/ReportItem";
@@ -17,13 +16,21 @@ export type LostFoundStackParamList = {
 };
 
 export type LostFoundStackScreenProps<T extends keyof LostFoundStackParamList> =
-  NativeStackScreenProps<LostFoundStackParamList, T>;
+  {
+    navigation: any;
+    route: { key: string; name: T; params: LostFoundStackParamList[T] };
+  };
 
 const Stack = createNativeStackNavigator<LostFoundStackParamList>();
 
 export default function LostFoundStackNavigator() {
   return (
-    <Stack.Navigator>
+    <Stack.Navigator
+      id="lost-found-stack"
+      screenOptions={{
+        headerShown: true,
+      }}
+    >
       <Stack.Screen
         name="LostFoundHome"
         component={LostFoundHome}
@@ -52,3 +59,4 @@ export default function LostFoundStackNavigator() {
     </Stack.Navigator>
   );
 }
+
