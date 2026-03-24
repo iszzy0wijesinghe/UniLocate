@@ -8,6 +8,7 @@ import {
   Image,
 } from "react-native";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import type { LostFoundStackScreenProps } from "../../navigation/LostFoundStack";
 import type { LostFoundPostSummary } from "./lostFound.api";
@@ -18,6 +19,7 @@ type Navigation = LostFoundStackScreenProps<"LostFoundHome">["navigation"];
 export default function LostFoundHome() {
   const navigation = useNavigation<Navigation>();
   const { posts, loading, error, refetch } = useLostFoundPosts();
+  const tabBarHeight = useBottomTabBarHeight();
 
   useFocusEffect(
     React.useCallback(() => {
@@ -84,9 +86,10 @@ export default function LostFoundHome() {
         data={posts.filter((p) => p.type === "lost" && p.status === "open")}
         keyExtractor={(item) => item.id}
         renderItem={renderPost}
-        contentContainerStyle={
-          posts.length === 0 ? styles.emptyListContainer : undefined
-        }
+        contentContainerStyle={[
+          posts.length === 0 ? styles.emptyListContainer : undefined,
+          { paddingBottom: tabBarHeight + 24 },
+        ]}
         ListEmptyComponent={
           <Text style={styles.emptyText}>
             No posts yet. Be the first to report a lost or found item.

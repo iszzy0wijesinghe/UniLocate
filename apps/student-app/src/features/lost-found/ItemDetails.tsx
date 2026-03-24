@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView } from "react-native";
 import { RouteProp, useNavigation, useRoute } from "@react-navigation/native";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import type {
   LostFoundStackParamList,
@@ -16,6 +17,7 @@ export default function ItemDetails() {
   const navigation = useNavigation<Navigation>();
   const [post, setPost] = useState<LostFoundPostSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const tabBarHeight = useBottomTabBarHeight();
 
   useEffect(() => {
     getPostDetails(route.params.id)
@@ -45,7 +47,7 @@ export default function ItemDetails() {
   const isLost = post.type === "lost";
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={[styles.container, { paddingBottom: tabBarHeight + 24 }]}>
       <View style={styles.headerCard}>
         <View style={styles.headerRow}>
           <Text style={styles.badge}>{post.type.toUpperCase()}</Text>

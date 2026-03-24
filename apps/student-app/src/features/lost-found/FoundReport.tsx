@@ -8,6 +8,7 @@ import {
   ScrollView,
 } from "react-native";
 import { RouteProp, useNavigation, useRoute } from "@react-navigation/native";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import type {
   LostFoundStackParamList,
@@ -22,6 +23,7 @@ type Navigation = LostFoundStackScreenProps<"FoundReport">["navigation"];
 export default function FoundReport() {
   const route = useRoute<FoundRoute>();
   const navigation = useNavigation<Navigation>();
+  const tabBarHeight = useBottomTabBarHeight();
 
   const [placeFound, setPlaceFound] = useState("");
   const [description, setDescription] = useState("");
@@ -74,7 +76,10 @@ export default function FoundReport() {
         details are visible only in secure chat.
       </Text>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + 20 }]}
+        showsVerticalScrollIndicator={false}
+      >
         <Text style={styles.label}>Where did you find it?</Text>
         <TextInput
           style={styles.input}
@@ -130,7 +135,7 @@ export default function FoundReport() {
         />
       </ScrollView>
 
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: tabBarHeight + 8 }]}>
         <TouchableOpacity
           style={[styles.footerButton, styles.primaryButton]}
           onPress={handleSubmit}

@@ -10,6 +10,7 @@ import {
   Alert,
 } from "react-native";
 import { RouteProp, useNavigation, useRoute } from "@react-navigation/native";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import DateTimePicker, {
   DateTimePickerAndroid,
 } from "@react-native-community/datetimepicker";
@@ -42,6 +43,7 @@ export default function ReportItem() {
   const route = useRoute<ReportRoute>();
   const navigation = useNavigation<Navigation>();
   const reportMode = route.params.mode;
+  const tabBarHeight = useBottomTabBarHeight();
 
   const [step, setStep] = useState<Step>(1);
   const [category, setCategory] = useState<ItemCategory>("ID Card");
@@ -206,7 +208,10 @@ export default function ReportItem() {
         ))}
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + 20 }]}
+        showsVerticalScrollIndicator={false}
+      >
         {/* Step 1: Item Identification */}
         {step === 1 && (
           <View style={styles.panel}>
@@ -382,7 +387,7 @@ export default function ReportItem() {
       </ScrollView>
 
       {/* Footer */}
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: tabBarHeight + 8 }]}>
         {step > 1 && step < 4 && (
           <TouchableOpacity style={styles.footerButton} onPress={goBack}>
             <Text style={styles.secondaryButtonText}>Back</Text>
