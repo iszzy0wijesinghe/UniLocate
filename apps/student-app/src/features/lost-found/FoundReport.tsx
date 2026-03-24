@@ -6,6 +6,8 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
+  Alert,
+  Image,
 } from "react-native";
 import { RouteProp, useNavigation, useRoute } from "@react-navigation/native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
@@ -16,6 +18,7 @@ import type {
 } from "../../navigation/LostFoundStack";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { scheduleFinderNotification } from "../../notifications";
+import * as ImagePicker from "expo-image-picker";
 
 type FoundRoute = RouteProp<LostFoundStackParamList, "FoundReport">;
 type Navigation = LostFoundStackScreenProps<"FoundReport">["navigation"];
@@ -27,8 +30,7 @@ export default function FoundReport() {
 
   const [placeFound, setPlaceFound] = useState("");
   const [description, setDescription] = useState("");
-  const [imageUrl1, setImageUrl1] = useState("");
-  const [imageUrl2, setImageUrl2] = useState("");
+  const [imageUris, setImageUris] = useState<string[]>([]);
   const [whenFound, setWhenFound] = useState<Date | null>(new Date());
   const [showPicker, setShowPicker] = useState(false);
 
@@ -37,6 +39,37 @@ export default function FoundReport() {
     if (selected) {
       setWhenFound(selected);
     }
+  };
+
+  const pickImageFromGallery = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert(
+        "Permission required",
+        "Please allow gallery access to attach item photos."
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.7,
+    });
+
+    if (!result.canceled && result.assets[0]?.uri) {
+      setImageUris((prev) => {
+        if (prev.length >= 4) {
+          Alert.alert("Limit reached", "You can upload up to 4 images.");
+          return prev;
+        }
+        return [...prev, result.assets[0].uri];
+      });
+    }
+  };
+
+  const removeImageAt = (idx: number) => {
+    setImageUris((prev) => prev.filter((_, i) => i !== idx));
   };
 
   const handleSubmit = async () => {
@@ -50,8 +83,9 @@ export default function FoundReport() {
     if (description.trim()) {
       lines.push(`Finder description: ${description.trim()}`);
     }
-    // We deliberately do NOT include image URLs in the chat text,
-    // only in the pictures the finder may share separately later.
+    if (imageUris.length > 0) {
+      lines.push(`Attached photos: ${imageUris.length}`);
+    }
 
     const initialMessage =
       lines.length > 0
@@ -118,21 +152,29 @@ export default function FoundReport() {
           onChangeText={setDescription}
         />
 
-        <Text style={styles.label}>Image URL 1 (optional)</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="https://example.com/image1.jpg"
-          value={imageUrl1}
-          onChangeText={setImageUrl1}
-        />
-
-        <Text style={styles.label}>Image URL 2 (optional)</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="https://example.com/image2.jpg"
-          value={imageUrl2}
-          onChangeText={setImageUrl2}
-        />
+        <Text style={styles.label}>Photos (optional)</Text>
+        <TouchableOpacity
+          style={[styles.input, styles.uploadButton]}
+          onPress={pickImageFromGallery}
+        >
+          <Text style={styles.uploadButtonText}>Select image from gallery</Text>
+        </TouchableOpacity>
+        <Text style={styles.helperText}>Up to 4 images can be attached.</Text>
+        {imageUris.length > 0 && (
+          <View style={styles.imageGrid}>
+            {imageUris.map((uri, idx) => (
+              <View key={`${uri}-${idx}`} style={styles.imageWrap}>
+                <Image source={{ uri }} style={styles.previewImage} />
+                <TouchableOpacity
+                  style={styles.removeBadge}
+                  onPress={() => removeImageAt(idx)}
+                >
+                  <Text style={styles.removeBadgeText}>X</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+        )}
       </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: tabBarHeight + 8 }]}>
@@ -184,6 +226,50 @@ const styles = StyleSheet.create({
   multilineInput: {
     textAlignVertical: "top",
     minHeight: 100,
+  },
+  helperText: {
+    marginTop: 6,
+    color: "#667085",
+    fontSize: 12,
+  },
+  uploadButton: {
+    alignItems: "center",
+    borderStyle: "dashed",
+  },
+  uploadButtonText: {
+    color: "#053668",
+    fontWeight: "700",
+  },
+  imageGrid: {
+    marginTop: 8,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  imageWrap: {
+    position: "relative",
+  },
+  previewImage: {
+    width: 74,
+    height: 74,
+    borderRadius: 10,
+    backgroundColor: "#E4E7EC",
+  },
+  removeBadge: {
+    position: "absolute",
+    right: -6,
+    top: -6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#B42318",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  removeBadgeText: {
+    color: "white",
+    fontSize: 10,
+    fontWeight: "700",
   },
   pickerButton: {
     borderRadius: 12,

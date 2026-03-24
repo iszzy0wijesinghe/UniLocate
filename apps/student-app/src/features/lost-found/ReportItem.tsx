@@ -8,12 +8,14 @@ import {
   ScrollView,
   Platform,
   Alert,
+  Image,
 } from "react-native";
 import { RouteProp, useNavigation, useRoute } from "@react-navigation/native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import DateTimePicker, {
   DateTimePickerAndroid,
 } from "@react-native-community/datetimepicker";
+import * as ImagePicker from "expo-image-picker";
 
 import type {
   LostFoundStackParamList,
@@ -50,8 +52,7 @@ export default function ReportItem() {
   const [title, setTitle] = useState("");
   const [timeHint, setTimeHint] = useState("");
   const [description, setDescription] = useState("");
-  const [imageUrl1, setImageUrl1] = useState("");
-  const [imageUrl2, setImageUrl2] = useState("");
+  const [imageUris, setImageUris] = useState<string[]>([]);
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
@@ -83,7 +84,7 @@ export default function ReportItem() {
         title: title.trim(),
         description,
         timeHint,
-        images: [imageUrl1, imageUrl2].filter((u) => u.trim().length > 0),
+        images: imageUris,
       });
 
       setCreatedPostId(post.id); 
@@ -158,6 +159,37 @@ export default function ReportItem() {
         });
       },
     });
+  };
+
+  const pickImageFromGallery = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert(
+        "Permission required",
+        "Please allow gallery access to attach item photos."
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.7,
+    });
+
+    if (!result.canceled && result.assets[0]?.uri) {
+      setImageUris((prev) => {
+        if (prev.length >= 4) {
+          Alert.alert("Limit reached", "You can upload up to 4 images.");
+          return prev;
+        }
+        return [...prev, result.assets[0].uri];
+      });
+    }
+  };
+
+  const removeImageAt = (idx: number) => {
+    setImageUris((prev) => prev.filter((_, i) => i !== idx));
   };
 
   if (submitted)
@@ -368,20 +400,29 @@ export default function ReportItem() {
               value={description}
               onChangeText={setDescription}
             />
-            <Text style={styles.label}>Image URL 1 (optional)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="https://example.com/image1.jpg"
-              value={imageUrl1}
-              onChangeText={setImageUrl1}
-            />
-            <Text style={styles.label}>Image URL 2 (optional)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="https://example.com/image2.jpg"
-              value={imageUrl2}
-              onChangeText={setImageUrl2}
-            />
+            <Text style={styles.label}>Photos (optional)</Text>
+            <TouchableOpacity
+              style={[styles.input, styles.uploadButton]}
+              onPress={pickImageFromGallery}
+            >
+              <Text style={styles.uploadButtonText}>Select image from gallery</Text>
+            </TouchableOpacity>
+            <Text style={styles.helperText}>Up to 4 images can be attached.</Text>
+            {imageUris.length > 0 && (
+              <View style={styles.imageGrid}>
+                {imageUris.map((uri, idx) => (
+                  <View key={`${uri}-${idx}`} style={styles.imageWrap}>
+                    <Image source={{ uri }} style={styles.previewImage} />
+                    <TouchableOpacity
+                      style={styles.removeBadge}
+                      onPress={() => removeImageAt(idx)}
+                    >
+                      <Text style={styles.removeBadgeText}>X</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
         )}
       </ScrollView>
@@ -442,6 +483,45 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 13, color: "#475467" },
   chipTextSelected: { color: "white", fontWeight: "600" },
   helperText: { fontSize: 13, color: "#667085", marginBottom: 12 },
+  uploadButton: {
+    alignItems: "center",
+    borderStyle: "dashed",
+  },
+  uploadButtonText: {
+    color: "#053668",
+    fontWeight: "700",
+  },
+  imageGrid: {
+    marginTop: 8,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  imageWrap: {
+    position: "relative",
+  },
+  previewImage: {
+    width: 74,
+    height: 74,
+    borderRadius: 10,
+    backgroundColor: "#E4E7EC",
+  },
+  removeBadge: {
+    position: "absolute",
+    right: -6,
+    top: -6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#B42318",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  removeBadgeText: {
+    color: "white",
+    fontSize: 10,
+    fontWeight: "700",
+  },
   mapMock: { height: 200, borderRadius: 16, backgroundColor: "#EAF2FA", overflow: "hidden" },
   mapPoint: { position: "absolute", alignItems: "center" },
   mapDot: { width: 10, height: 10, borderRadius: 999, backgroundColor: "#053668", borderWidth: 2, borderColor: "white" },
