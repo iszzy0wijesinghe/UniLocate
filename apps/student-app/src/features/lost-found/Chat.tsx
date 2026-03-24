@@ -97,11 +97,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 12,
-    backgroundColor: "#f5f5f9",
+    backgroundColor: "#F3F6FA",
   },
   helperText: {
     fontSize: 12,
-    color: "#6b7280",
+    color: "#667085",
     marginBottom: 8,
   },
   list: {
@@ -116,7 +116,7 @@ const styles = StyleSheet.create({
   },
   messageSelf: {
     alignSelf: "flex-end",
-    backgroundColor: "#2563eb",
+    backgroundColor: "#053668",
   },
   messageOther: {
     alignSelf: "flex-start",
@@ -139,7 +139,7 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: "#d1d5db",
+    borderColor: "#D0D5DD",
     paddingHorizontal: 12,
     paddingVertical: 8,
     backgroundColor: "white",
@@ -148,8 +148,8 @@ const styles = StyleSheet.create({
   sendButton: {
     paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: "#2563eb",
+    borderRadius: 12,
+    backgroundColor: "#053668",
   },
   sendButtonText: {
     color: "white",

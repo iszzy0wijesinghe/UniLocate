@@ -74,7 +74,7 @@ export default function FoundReport() {
         details are visible only in secure chat.
       </Text>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={styles.label}>Where did you find it?</Text>
         <TextInput
           style={styles.input}
@@ -146,17 +146,17 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 16,
-    backgroundColor: "#f5f5f9",
+    backgroundColor: "#F3F6FA",
   },
   title: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#111827",
+    fontSize: 22,
+    fontWeight: "800",
+    color: "#053668",
   },
   subtitle: {
     marginTop: 4,
     fontSize: 14,
-    color: "#6b7280",
+    color: "#667085",
   },
   content: {
     paddingVertical: 16,
@@ -165,12 +165,12 @@ const styles = StyleSheet.create({
     marginTop: 12,
     marginBottom: 4,
     fontSize: 13,
-    color: "#4b5563",
+    color: "#475467",
   },
   input: {
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#d1d5db",
+    borderColor: "#D0D5DD",
     paddingHorizontal: 12,
     paddingVertical: 8,
     backgroundColor: "white",
@@ -181,9 +181,9 @@ const styles = StyleSheet.create({
     minHeight: 100,
   },
   pickerButton: {
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#d1d5db",
+    borderColor: "#D0D5DD",
     paddingHorizontal: 12,
     paddingVertical: 10,
     backgroundColor: "white",
@@ -200,16 +200,16 @@ const styles = StyleSheet.create({
   footerButton: {
     flex: 1,
     paddingVertical: 12,
-    borderRadius: 999,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
   },
   primaryButton: {
-    backgroundColor: "#2563eb",
+    backgroundColor: "#053668",
   },
   footerButtonText: {
     color: "white",
-    fontWeight: "600",
+    fontWeight: "700",
   },
 });
 
