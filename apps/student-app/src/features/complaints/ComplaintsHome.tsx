@@ -52,8 +52,9 @@ export default function ComplaintsHome({
   const awaitingReplyCount = complaints.filter((item) => item.status === 'NEED_MORE_INFO').length;
 
   return (
-    <SafeAreaView style={styles.screen}>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
       <FlatList
+        style={styles.screen}
         data={filteredComplaints}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
@@ -119,6 +120,7 @@ export default function ComplaintsHome({
               <Text style={styles.sectionTitle}>Browse by category</Text>
               <StatusBadge label="Anonymous only" tone="accent" />
             </View>
+
             <CategoryPicker
               options={categoryOptions}
               value={categoryFilter}
@@ -157,13 +159,18 @@ export default function ComplaintsHome({
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: complaintsTheme.colors.background,
+  },
   screen: {
     flex: 1,
     backgroundColor: complaintsTheme.colors.background,
   },
   listContent: {
-    padding: 16,
-    paddingBottom: 28,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 80,
     flexGrow: 1,
   },
   heroCard: {

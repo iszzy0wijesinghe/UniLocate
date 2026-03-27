@@ -9,6 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { ComplaintsStackScreenProps } from '../../navigation/ComplaintsStack';
 import { complaintsTheme } from './components/theme';
@@ -31,77 +32,84 @@ export default function ReconnectComplaint({
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.screen}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.heroCard}>
-          <Text style={styles.eyebrow}>Reconnect privately</Text>
-          <Text style={styles.heroTitle}>Use your Anonymous ID and secret to restore access.</Text>
-          <Text style={styles.heroSubtitle}>
-            The secret cannot be recovered. A new case session is created after verification.
-          </Text>
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.label}>Anonymous ID</Text>
-          <TextInput
-            value={anonId}
-            onChangeText={setAnonId}
-            placeholder="ANON-45821"
-            placeholderTextColor="#98A2B3"
-            style={styles.input}
-            autoCapitalize="characters"
-          />
-
-          <Text style={[styles.label, styles.spacedLabel]}>Secret</Text>
-          <TextInput
-            value={secret}
-            onChangeText={setSecret}
-            placeholder="Paste your secret"
-            placeholderTextColor="#98A2B3"
-            style={styles.input}
-            secureTextEntry
-          />
-
-          {reconnectMutation.isError ? (
-            <Text style={styles.errorText}>
-              {(reconnectMutation.error as Error).message || 'Reconnect failed'}
+    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+      <KeyboardAvoidingView
+        style={styles.screen}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.heroCard}>
+            <Text style={styles.eyebrow}>Reconnect privately</Text>
+            <Text style={styles.heroTitle}>Use your Anonymous ID and secret to restore access.</Text>
+            <Text style={styles.heroSubtitle}>
+              The secret cannot be recovered. A new case session is created after verification.
             </Text>
-          ) : null}
-
-          <View style={styles.buttonRow}>
-            <Pressable
-              style={[styles.button, styles.secondaryButton]}
-              onPress={() => navigation.goBack()}
-            >
-              <Text style={styles.secondaryButtonText}>Cancel</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.button, styles.primaryButton]}
-              onPress={handleSubmit}
-              disabled={reconnectMutation.isPending}
-            >
-              <Text style={styles.primaryButtonText}>
-                {reconnectMutation.isPending ? 'Verifying...' : 'Reconnect'}
-              </Text>
-            </Pressable>
           </View>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+
+          <View style={styles.card}>
+            <Text style={styles.label}>Anonymous ID</Text>
+            <TextInput
+              value={anonId}
+              onChangeText={setAnonId}
+              placeholder="ANON-45821"
+              placeholderTextColor="#98A2B3"
+              style={styles.input}
+              autoCapitalize="characters"
+            />
+
+            <Text style={[styles.label, styles.spacedLabel]}>Secret</Text>
+            <TextInput
+              value={secret}
+              onChangeText={setSecret}
+              placeholder="Paste your secret"
+              placeholderTextColor="#98A2B3"
+              style={styles.input}
+              secureTextEntry
+            />
+
+            {reconnectMutation.isError ? (
+              <Text style={styles.errorText}>
+                {(reconnectMutation.error as Error).message || 'Reconnect failed'}
+              </Text>
+            ) : null}
+
+            <View style={styles.buttonRow}>
+              <Pressable
+                style={[styles.button, styles.secondaryButton]}
+                onPress={() => navigation.goBack()}
+              >
+                <Text style={styles.secondaryButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.button, styles.primaryButton]}
+                onPress={handleSubmit}
+                disabled={reconnectMutation.isPending}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {reconnectMutation.isPending ? 'Verifying...' : 'Reconnect'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: complaintsTheme.colors.background,
+  },
   screen: {
     flex: 1,
     backgroundColor: complaintsTheme.colors.background,
   },
   content: {
-    padding: 16,
-    paddingBottom: 28,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 80,
   },
   heroCard: {
     backgroundColor: complaintsTheme.colors.primary,

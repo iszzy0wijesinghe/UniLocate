@@ -7,7 +7,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
@@ -15,38 +14,37 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
+
 import { useUserProfileStore } from "../../store/useUserProfileStore";
-import type { FirstRunStackParamList } from "../../navigation/FirstRunNavigator";
+import type { SettingsStackParamList } from "../../navigation/SettingsNavigator";
 
-type Props = NativeStackScreenProps<
-  FirstRunStackParamList,
-  "UsernameRegistration"
->;
+type Props = NativeStackScreenProps<SettingsStackParamList, "EditUsername">;
 
-export default function UsernameRegistration({ navigation }: Props) {
-  const [username, setUsername] = React.useState("");
-  const [acceptedPrivacy, setAcceptedPrivacy] = React.useState(false);
+export default function EditUsername({ navigation }: Props) {
+  const username = useUserProfileStore((state) => state.username);
+  const setUsername = useUserProfileStore((state) => state.setUsername);
 
-  const setUsernameInStore = useUserProfileStore((state) => state.setUsername);
+  const [draftUsername, setDraftUsername] = React.useState(username ?? "");
 
-  const handleContinue = () => {
-    const trimmedUsername = username.trim();
+  const handleSave = () => {
+    const trimmedUsername = draftUsername.trim();
 
     if (!trimmedUsername) {
-      Alert.alert("Username required", "Please enter a username to continue.");
+      Alert.alert("Username required", "Please enter a username before saving.");
       return;
     }
 
-    if (!acceptedPrivacy) {
+    if (trimmedUsername.length < 2) {
       Alert.alert(
-        "Privacy policy required",
-        "Please accept the privacy policy to continue.",
+        "Username too short",
+        "Please choose a username with at least 2 characters.",
       );
       return;
     }
 
-    setUsernameInStore(trimmedUsername);
-    navigation.navigate("Calibration");
+    setUsername(trimmedUsername);
+    Alert.alert("Saved", "Your username has been updated.");
+    navigation.goBack();
   };
 
   return (
@@ -60,25 +58,32 @@ export default function UsernameRegistration({ navigation }: Props) {
           />
         </View>
 
+        <View style={styles.headerRow}>
+          <Pressable style={styles.backButton} onPress={() => navigation.goBack()}>
+            <Ionicons name="arrow-back" size={20} color="#053668" />
+          </Pressable>
+          <Text style={styles.headerTitle}>Edit Username</Text>
+          <View style={styles.headerSpacer} />
+        </View>
+
         <View style={styles.heroCard}>
-          <Text style={styles.eyebrow}>Create your profile</Text>
-          <Text style={styles.heroTitle}>Choose a username</Text>
+          <Text style={styles.eyebrow}>Profile</Text>
+          <Text style={styles.heroTitle}>Update your app name</Text>
           <Text style={styles.heroSubtitle}>
-            UniLocate does not require your real name, email, or student ID.
-            Pick a simple username to personalize your app experience.
+            This is the name shown across UniLocate, including the home screen
+            greeting and other profile-related areas.
           </Text>
         </View>
 
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Username</Text>
           <Text style={styles.helpText}>
-            This name is used only inside the app experience. Keep it simple and
-            easy to recognize.
+            Keep it short, simple, and easy to recognize.
           </Text>
 
           <TextInput
-            value={username}
-            onChangeText={setUsername}
+            value={draftUsername}
+            onChangeText={setDraftUsername}
             placeholder="Enter username"
             placeholderTextColor="#98A2B3"
             style={styles.input}
@@ -87,33 +92,11 @@ export default function UsernameRegistration({ navigation }: Props) {
             maxLength={24}
           />
 
-          <View style={styles.policyCard}>
-            <View style={styles.policyHeader}>
-              <Ionicons
-                name="shield-checkmark-outline"
-                size={20}
-                color="#053668"
-              />
-              <Text style={styles.policyTitle}>Privacy policy</Text>
-            </View>
-
-            <Text style={styles.policyText}>
-              UniLocate uses campus-only device data to support map guidance,
-              lost & found, and anonymous complaints. Personal identity details
-              are not required for core use.
+          <View style={styles.previewCard}>
+            <Text style={styles.previewLabel}>Preview</Text>
+            <Text style={styles.previewValue}>
+              {draftUsername.trim() ? draftUsername.trim() : "Campus User"}
             </Text>
-
-            <View style={styles.toggleRow}>
-              <Text style={styles.toggleLabel}>
-                I agree to the privacy policy
-              </Text>
-              <Switch
-                value={acceptedPrivacy}
-                onValueChange={setAcceptedPrivacy}
-                trackColor={{ false: "#D0D5DD", true: "#FCC9AE" }}
-                thumbColor={acceptedPrivacy ? "#FF7100" : "#FFFFFF"}
-              />
-            </View>
           </View>
 
           <View style={styles.actionRow}>
@@ -121,14 +104,14 @@ export default function UsernameRegistration({ navigation }: Props) {
               style={[styles.button, styles.secondaryButton]}
               onPress={() => navigation.goBack()}
             >
-              <Text style={styles.secondaryButtonText}>Back</Text>
+              <Text style={styles.secondaryButtonText}>Cancel</Text>
             </Pressable>
 
             <Pressable
               style={[styles.button, styles.primaryButton]}
-              onPress={handleContinue}
+              onPress={handleSave}
             >
-              <Text style={styles.primaryButtonText}>Continue</Text>
+              <Text style={styles.primaryButtonText}>Save Changes</Text>
             </Pressable>
           </View>
         </View>
@@ -145,15 +128,39 @@ const styles = StyleSheet.create({
   contentContainer: {
     paddingHorizontal: 16,
     paddingTop: 8,
-    paddingBottom: 36,
+    paddingBottom: 100,
   },
   logoWrap: {
     alignItems: "center",
     marginBottom: 14,
   },
   logo: {
-    width: 220,
-    height: 80,
+    width: 210,
+    height: 64,
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+  backButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111827",
+  },
+  headerSpacer: {
+    width: 42,
   },
   heroCard: {
     backgroundColor: "#053668",
@@ -210,42 +217,26 @@ const styles = StyleSheet.create({
     color: "#111827",
     fontSize: 15,
   },
-  policyCard: {
-    marginTop: 18,
+  previewCard: {
+    marginTop: 16,
     borderRadius: 18,
     backgroundColor: "#F9FAFB",
     borderWidth: 1,
     borderColor: "#E5E7EB",
     padding: 16,
   },
-  policyHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
+  previewLabel: {
+    fontSize: 12,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.7,
+    color: "#98A2B3",
   },
-  policyTitle: {
-    fontSize: 14,
-    fontWeight: "700",
+  previewValue: {
+    marginTop: 8,
+    fontSize: 18,
+    fontWeight: "800",
     color: "#053668",
-  },
-  policyText: {
-    marginTop: 10,
-    fontSize: 13,
-    lineHeight: 20,
-    color: "#667085",
-  },
-  toggleRow: {
-    marginTop: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 16,
-    justifyContent: "space-between",
-  },
-  toggleLabel: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#111827",
   },
   actionRow: {
     flexDirection: "row",

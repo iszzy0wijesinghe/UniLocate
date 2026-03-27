@@ -15,6 +15,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 
@@ -88,7 +89,7 @@ export default function NewComplaint({
   const createMutation = useCreateComplaintMutation();
 
   const form = useForm<CreateComplaintFormValues>({
-    resolver: zodResolver(createComplaintSchema),
+    resolver: zodResolver(createComplaintSchema as any),
     defaultValues: {
       title: '',
       category: 'harassment',
@@ -174,292 +175,307 @@ export default function NewComplaint({
 
   if (receipt) {
     return (
-      <ScrollView style={styles.screen} contentContainerStyle={styles.contentContainer}>
-        <View style={styles.heroCard}>
-          <Text style={styles.eyebrow}>Store these safely</Text>
-          <Text style={styles.heroTitle}>Your anonymous complaint was submitted.</Text>
-          <Text style={styles.heroSubtitle}>
-            This secret is shown once. The app cannot recover it after you leave this screen.
-          </Text>
-        </View>
-
-        {receipt.severity === 'CRITICAL' ? (
-          <View style={{ marginTop: 16 }}>
-            <EmergencyBanner resources={receipt.emergencyResources} />
-          </View>
-        ) : null}
-
-        <View style={styles.sectionCard}>
-          <Text style={styles.label}>Anonymous ID</Text>
-          <Text selectable style={styles.codeText}>
-            {receipt.anonId}
-          </Text>
-          <Pressable style={styles.inlineAction} onPress={() => handleCopy(receipt.anonId, 'Anonymous ID')}>
-            <Text style={styles.inlineActionText}>Copy ID</Text>
-          </Pressable>
-
-          <Text style={[styles.label, styles.spacedLabel]}>Secret</Text>
-          <Text selectable style={styles.codeText}>
-            {receipt.secret}
-          </Text>
-          <Pressable style={styles.inlineAction} onPress={() => handleCopy(receipt.secret, 'Secret')}>
-            <Text style={styles.inlineActionText}>Copy secret</Text>
-          </Pressable>
-
-          <View style={styles.badgeRow}>
-            <StatusBadge
-              label={receipt.severity}
-              tone={receipt.severity === 'CRITICAL' ? 'critical' : 'accent'}
-            />
-            <StatusBadge label={getCategoryLabel(values.category)} />
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+        <ScrollView style={styles.screen} contentContainerStyle={styles.contentContainer}>
+          <View style={styles.heroCard}>
+            <Text style={styles.eyebrow}>Store these safely</Text>
+            <Text style={styles.heroTitle}>Your anonymous complaint was submitted.</Text>
+            <Text style={styles.heroSubtitle}>
+              This secret is shown once. The app cannot recover it after you leave this screen.
+            </Text>
           </View>
 
-          <Text style={styles.warningText}>
-            This secret cannot be recovered if lost. Save it outside the app before leaving.
-          </Text>
+          {receipt.severity === 'CRITICAL' ? (
+            <View style={{ marginTop: 16 }}>
+              <EmergencyBanner resources={receipt.emergencyResources} />
+            </View>
+          ) : null}
 
-          <Pressable style={[styles.button, styles.primaryButton]} onPress={handleShare}>
-            <Text style={styles.primaryButtonText}>Share receipt</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.button, styles.secondaryButton]}
-            onPress={() =>
-              navigation.replace('ComplaintDetails', {
-                caseId: receipt.complaintId,
-              })
-            }
-          >
-            <Text style={styles.secondaryButtonText}>Open complaint details</Text>
-          </Pressable>
-        </View>
-      </ScrollView>
+          <View style={styles.sectionCard}>
+            <Text style={styles.label}>Anonymous ID</Text>
+            <Text selectable style={styles.codeText}>
+              {receipt.anonId}
+            </Text>
+            <Pressable
+              style={styles.inlineAction}
+              onPress={() => handleCopy(receipt.anonId, 'Anonymous ID')}
+            >
+              <Text style={styles.inlineActionText}>Copy ID</Text>
+            </Pressable>
+
+            <Text style={[styles.label, styles.spacedLabel]}>Secret</Text>
+            <Text selectable style={styles.codeText}>
+              {receipt.secret}
+            </Text>
+            <Pressable
+              style={styles.inlineAction}
+              onPress={() => handleCopy(receipt.secret, 'Secret')}
+            >
+              <Text style={styles.inlineActionText}>Copy secret</Text>
+            </Pressable>
+
+            <View style={styles.badgeRow}>
+              <StatusBadge
+                label={receipt.severity}
+                tone={receipt.severity === 'CRITICAL' ? 'critical' : 'accent'}
+              />
+              <StatusBadge label={getCategoryLabel(values.category)} />
+            </View>
+
+            <Text style={styles.warningText}>
+              This secret cannot be recovered if lost. Save it outside the app before leaving.
+            </Text>
+
+            <Pressable style={[styles.button, styles.primaryButton]} onPress={handleShare}>
+              <Text style={styles.primaryButtonText}>Share receipt</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.button, styles.secondaryButton]}
+              onPress={() =>
+                navigation.replace('ComplaintDetails', {
+                  caseId: receipt.complaintId,
+                })
+              }
+            >
+              <Text style={styles.secondaryButtonText}>Open complaint details</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
     );
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.screen}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView contentContainerStyle={styles.contentContainer}>
-        <View style={styles.heroCard}>
-          <Text style={styles.eyebrow}>Anonymous reporting</Text>
-          <Text style={styles.heroTitle}>Create a complaint without identifying yourself.</Text>
-          <Text style={styles.heroSubtitle}>
-            Names, email addresses, and student IDs are not required. Only share what staff need
-            to act.
-          </Text>
-        </View>
-
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>Complaint details</Text>
-
-          <Text style={styles.label}>Category</Text>
-          <Controller
-            control={form.control}
-            name="category"
-            render={({ field }) => (
-              <CategoryPicker
-                options={complaintCategories}
-                value={field.value}
-                onChange={field.onChange}
-              />
-            )}
-          />
-
-          <Text style={[styles.label, styles.spacedLabel]}>Title</Text>
-          <Controller
-            control={form.control}
-            name="title"
-            render={({ field }) => (
-              <TextInput
-                value={field.value}
-                onChangeText={field.onChange}
-                placeholder="Short summary of what happened"
-                placeholderTextColor="#98A2B3"
-                style={styles.input}
-              />
-            )}
-          />
-
-          <Text style={[styles.label, styles.spacedLabel]}>Description</Text>
-          <Controller
-            control={form.control}
-            name="description"
-            render={({ field }) => (
-              <TextInput
-                value={field.value}
-                onChangeText={field.onChange}
-                placeholder="Describe what happened, where it happened, who was involved, and what follow-up is needed."
-                placeholderTextColor="#98A2B3"
-                style={[styles.input, styles.multilineInput]}
-                multiline
-                textAlignVertical="top"
-              />
-            )}
-          />
-
-          <View style={styles.badgeRow}>
-            <StatusBadge
-              label={`Severity preview: ${severityPreview}`}
-              tone={severityPreview === 'CRITICAL' ? 'critical' : 'neutral'}
-            />
+    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+      <KeyboardAvoidingView
+        style={styles.screen}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView contentContainerStyle={styles.contentContainer}>
+          <View style={styles.heroCard}>
+            <Text style={styles.eyebrow}>Anonymous reporting</Text>
+            <Text style={styles.heroTitle}>Create a complaint without identifying yourself.</Text>
+            <Text style={styles.heroSubtitle}>
+              Names, email addresses, and student IDs are not required. Only share what staff need
+              to act.
+            </Text>
           </View>
 
-          {severityPreview === 'CRITICAL' ? (
-            <View style={{ marginTop: 12 }}>
-              <EmergencyBanner />
-            </View>
-          ) : null}
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>Complaint details</Text>
 
-          <Text style={[styles.label, styles.spacedLabel]}>Optional location</Text>
-          <Controller
-            control={form.control}
-            name="locationText"
-            render={({ field }) => (
-              <TextInput
-                value={field.value}
-                onChangeText={field.onChange}
-                placeholder="Building, hostel, lecture hall, or nearby area"
-                placeholderTextColor="#98A2B3"
-                style={styles.input}
+            <Text style={styles.label}>Category</Text>
+            <Controller
+              control={form.control}
+              name="category"
+              render={({ field }) => (
+                <CategoryPicker
+                  options={complaintCategories}
+                  value={field.value}
+                  onChange={field.onChange}
+                />
+              )}
+            />
+
+            <Text style={[styles.label, styles.spacedLabel]}>Title</Text>
+            <Controller
+              control={form.control}
+              name="title"
+              render={({ field }) => (
+                <TextInput
+                  value={field.value}
+                  onChangeText={field.onChange}
+                  placeholder="Short summary of what happened"
+                  placeholderTextColor="#98A2B3"
+                  style={styles.input}
+                />
+              )}
+            />
+
+            <Text style={[styles.label, styles.spacedLabel]}>Description</Text>
+            <Controller
+              control={form.control}
+              name="description"
+              render={({ field }) => (
+                <TextInput
+                  value={field.value}
+                  onChangeText={field.onChange}
+                  placeholder="Describe what happened, where it happened, who was involved, and what follow-up is needed."
+                  placeholderTextColor="#98A2B3"
+                  style={[styles.input, styles.multilineInput]}
+                  multiline
+                  textAlignVertical="top"
+                />
+              )}
+            />
+
+            <View style={styles.badgeRow}>
+              <StatusBadge
+                label={`Severity preview: ${severityPreview}`}
+                tone={severityPreview === 'CRITICAL' ? 'critical' : 'neutral'}
               />
-            )}
-          />
+            </View>
 
-          <Text style={[styles.label, styles.spacedLabel]}>Optional incident time</Text>
-          <Controller
-            control={form.control}
-            name="incidentAt"
-            render={({ field }) => (
-              <>
-                <View style={styles.inlineFieldRow}>
-                  <Pressable
-                    style={[styles.input, styles.pickerInput]}
-                    onPress={() => openIncidentPicker(field.value)}
-                  >
-                    <Text
-                      style={field.value ? styles.pickerValueText : styles.pickerPlaceholderText}
-                    >
-                      {formatIncidentValue(field.value)}
-                    </Text>
-                  </Pressable>
-                  {field.value ? (
+            {severityPreview === 'CRITICAL' ? (
+              <View style={{ marginTop: 12 }}>
+                <EmergencyBanner />
+              </View>
+            ) : null}
+
+            <Text style={[styles.label, styles.spacedLabel]}>Optional location</Text>
+            <Controller
+              control={form.control}
+              name="locationText"
+              render={({ field }) => (
+                <TextInput
+                  value={field.value}
+                  onChangeText={field.onChange}
+                  placeholder="Building, hostel, lecture hall, or nearby area"
+                  placeholderTextColor="#98A2B3"
+                  style={styles.input}
+                />
+              )}
+            />
+
+            <Text style={[styles.label, styles.spacedLabel]}>Optional incident time</Text>
+            <Controller
+              control={form.control}
+              name="incidentAt"
+              render={({ field }) => (
+                <>
+                  <View style={styles.inlineFieldRow}>
                     <Pressable
-                      style={styles.clearInlineAction}
-                      onPress={() => field.onChange('')}
+                      style={[styles.input, styles.pickerInput]}
+                      onPress={() => openIncidentPicker(field.value)}
                     >
-                      <Text style={styles.clearInlineActionText}>Clear</Text>
+                      <Text
+                        style={field.value ? styles.pickerValueText : styles.pickerPlaceholderText}
+                      >
+                        {formatIncidentValue(field.value)}
+                      </Text>
                     </Pressable>
+                    {field.value ? (
+                      <Pressable
+                        style={styles.clearInlineAction}
+                        onPress={() => field.onChange('')}
+                      >
+                        <Text style={styles.clearInlineActionText}>Clear</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                  {incidentPickerMode ? (
+                    <DateTimePicker
+                      value={incidentPickerValue}
+                      mode={incidentPickerMode}
+                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                      onChange={(event, selectedDate) =>
+                        handleIncidentPickerChange(field.onChange, event, selectedDate)
+                      }
+                    />
                   ) : null}
-                </View>
-                {incidentPickerMode ? (
-                  <DateTimePicker
-                    value={incidentPickerValue}
-                    mode={incidentPickerMode}
-                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    onChange={(event, selectedDate) =>
-                      handleIncidentPickerChange(field.onChange, event, selectedDate)
-                    }
-                  />
-                ) : null}
-              </>
-            )}
-          />
-
-          <Text style={[styles.label, styles.spacedLabel]}>People involved</Text>
-          <Controller
-            control={form.control}
-            name="peopleInvolved"
-            render={({ field }) => (
-              <TextInput
-                value={field.value}
-                onChangeText={field.onChange}
-                placeholder="Optional names, groups, or roles"
-                placeholderTextColor="#98A2B3"
-                style={styles.input}
-              />
-            )}
-          />
-
-          <EvidenceUploader attachments={attachments} onChange={setAttachments} />
-
-          <View style={styles.toggleRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.label}>Keep my identity hidden</Text>
-              <Text style={styles.helpText}>
-                Anonymous complaints never ask for your student identity. Leave this on unless you
-                later choose to disclose contact details voluntarily.
-              </Text>
-            </View>
-            <Switch
-              value={keepIdentityHidden}
-              onValueChange={setKeepIdentityHidden}
-              trackColor={{ false: '#D0D5DD', true: '#FCC9AE' }}
-              thumbColor={keepIdentityHidden ? complaintsTheme.colors.accent : '#FFFFFF'}
+                </>
+              )}
             />
-          </View>
 
-          <Controller
-            control={form.control}
-            name="consent"
-            render={({ field }) => (
-              <Pressable style={styles.consentRow} onPress={() => field.onChange(!field.value)}>
-                <View style={[styles.checkbox, field.value && styles.checkboxActive]} />
+            <Text style={[styles.label, styles.spacedLabel]}>People involved</Text>
+            <Controller
+              control={form.control}
+              name="peopleInvolved"
+              render={({ field }) => (
+                <TextInput
+                  value={field.value}
+                  onChangeText={field.onChange}
+                  placeholder="Optional names, groups, or roles"
+                  placeholderTextColor="#98A2B3"
+                  style={styles.input}
+                />
+              )}
+            />
+
+            <EvidenceUploader attachments={attachments} onChange={setAttachments} />
+
+            <View style={styles.toggleRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.label}>Keep my identity hidden</Text>
                 <Text style={styles.helpText}>
-                  I confirm this report is accurate to the best of my knowledge, and I understand
-                  emergency support should be contacted first if there is immediate danger.
+                  Anonymous complaints never ask for your student identity. Leave this on unless you
+                  later choose to disclose contact details voluntarily.
+                </Text>
+              </View>
+              <Switch
+                value={keepIdentityHidden}
+                onValueChange={setKeepIdentityHidden}
+                trackColor={{ false: '#D0D5DD', true: '#FCC9AE' }}
+                thumbColor={keepIdentityHidden ? complaintsTheme.colors.accent : '#FFFFFF'}
+              />
+            </View>
+
+            <Controller
+              control={form.control}
+              name="consent"
+              render={({ field }) => (
+                <Pressable style={styles.consentRow} onPress={() => field.onChange(!field.value)}>
+                  <View style={[styles.checkbox, field.value && styles.checkboxActive]} />
+                  <Text style={styles.helpText}>
+                    I confirm this report is accurate to the best of my knowledge, and I understand
+                    emergency support should be contacted first if there is immediate danger.
+                  </Text>
+                </Pressable>
+              )}
+            />
+
+            {form.formState.errors.title?.message ? (
+              <Text style={styles.errorText}>{form.formState.errors.title.message}</Text>
+            ) : null}
+            {form.formState.errors.description?.message ? (
+              <Text style={styles.errorText}>{form.formState.errors.description.message}</Text>
+            ) : null}
+            {form.formState.errors.consent?.message ? (
+              <Text style={styles.errorText}>{form.formState.errors.consent.message}</Text>
+            ) : null}
+            {createMutation.isError ? (
+              <Text style={styles.errorText}>
+                {(createMutation.error as Error).message || 'Could not submit complaint.'}
+              </Text>
+            ) : null}
+
+            <View style={styles.actionRow}>
+              <Pressable
+                style={[styles.button, styles.secondaryButton]}
+                onPress={() => navigation.goBack()}
+              >
+                <Text style={styles.secondaryButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.button, styles.primaryButton]}
+                onPress={handleSubmit}
+                disabled={createMutation.isPending}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {createMutation.isPending ? 'Submitting...' : 'Submit complaint'}
                 </Text>
               </Pressable>
-            )}
-          />
-
-          {form.formState.errors.title?.message ? (
-            <Text style={styles.errorText}>{form.formState.errors.title.message}</Text>
-          ) : null}
-          {form.formState.errors.description?.message ? (
-            <Text style={styles.errorText}>{form.formState.errors.description.message}</Text>
-          ) : null}
-          {form.formState.errors.consent?.message ? (
-            <Text style={styles.errorText}>{form.formState.errors.consent.message}</Text>
-          ) : null}
-          {createMutation.isError ? (
-            <Text style={styles.errorText}>
-              {(createMutation.error as Error).message || 'Could not submit complaint.'}
-            </Text>
-          ) : null}
-
-          <View style={styles.actionRow}>
-            <Pressable
-              style={[styles.button, styles.secondaryButton]}
-              onPress={() => navigation.goBack()}
-            >
-              <Text style={styles.secondaryButtonText}>Cancel</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.button, styles.primaryButton]}
-              onPress={handleSubmit}
-              disabled={createMutation.isPending}
-            >
-              <Text style={styles.primaryButtonText}>
-                {createMutation.isPending ? 'Submitting...' : 'Submit complaint'}
-              </Text>
-            </Pressable>
+            </View>
           </View>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: complaintsTheme.colors.background,
+  },
   screen: {
     flex: 1,
     backgroundColor: complaintsTheme.colors.background,
   },
   contentContainer: {
-    padding: 16,
-    paddingBottom: 32,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 80,
   },
   heroCard: {
     backgroundColor: complaintsTheme.colors.primary,

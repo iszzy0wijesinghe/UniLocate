@@ -14,7 +14,9 @@ import type {
   StoredComplaintSession,
 } from './types/complaints';
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000';
+// const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000';
+import { API_BASE_URL } from '../../services/api/baseUrl';
+
 
 export const complaintCategories: Array<{
   value: ComplaintCategory;

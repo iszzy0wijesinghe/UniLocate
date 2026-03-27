@@ -11,6 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { ComplaintsStackScreenProps } from '../../navigation/ComplaintsStack';
 import ChatBubble from './components/ChatBubble';
@@ -49,122 +50,134 @@ export default function Chat({
 
   if (messagesQuery.isLoading) {
     return (
-      <View style={styles.screen}>
-        <View style={styles.loadingCard}>
-          <Text style={styles.loadingText}>Loading anonymous chat...</Text>
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+        <View style={styles.screen}>
+          <View style={styles.loadingCard}>
+            <Text style={styles.loadingText}>Loading anonymous chat...</Text>
+          </View>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
   if (!messagesQuery.data) {
     return (
-      <View style={styles.screen}>
-        <EmptyState
-          title="Chat unavailable"
-          description="Reconnect the case if the session on this device expired."
-          actionLabel="Back to details"
-          onAction={() => navigation.goBack()}
-        />
-      </View>
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+        <View style={styles.screen}>
+          <EmptyState
+            title="Chat unavailable"
+            description="Reconnect the case if the session on this device expired."
+            actionLabel="Back to details"
+            onAction={() => navigation.goBack()}
+          />
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.screen}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <View style={styles.header}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Anonymous follow-up chat</Text>
-          <Text style={styles.headerSubtitle}>Your identity stays hidden in this thread.</Text>
-        </View>
-        <Pressable
-          style={styles.headerAction}
-          onPress={() => navigation.navigate('ComplaintDetails', { caseId })}
-        >
-          <Text style={styles.headerActionText}>Details</Text>
-        </Pressable>
-      </View>
-
-      <ScrollView
-        style={styles.thread}
-        contentContainerStyle={styles.threadContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={messagesQuery.isRefetching}
-            onRefresh={() => messagesQuery.refetch()}
-            tintColor={complaintsTheme.colors.accent}
-          />
-        }
+    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+      <KeyboardAvoidingView
+        style={styles.screen}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        {messagesQuery.data.map((message) => (
-          <ChatBubble key={message.id} message={message} />
-        ))}
-      </ScrollView>
-
-      <View style={styles.composeCard}>
-        <View style={styles.toggleRow}>
+        <View style={styles.header}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.toggleTitle}>Request counseling follow-up</Text>
-            <Text style={styles.toggleHelp}>
-              Turn this on if you want the next message routed for counselor attention.
-            </Text>
+            <Text style={styles.headerTitle}>Anonymous follow-up chat</Text>
+            <Text style={styles.headerSubtitle}>Your identity stays hidden in this thread.</Text>
           </View>
-          <Switch
-            value={requestCounseling}
-            onValueChange={setRequestCounseling}
-            trackColor={{ false: '#D0D5DD', true: '#FCC9AE' }}
-            thumbColor={requestCounseling ? complaintsTheme.colors.accent : '#FFFFFF'}
-          />
-        </View>
-
-        <TextInput
-          value={draft}
-          onChangeText={setDraft}
-          placeholder="Write an anonymous follow-up..."
-          placeholderTextColor="#98A2B3"
-          style={styles.input}
-          multiline
-          textAlignVertical="top"
-        />
-
-        <EvidenceUploader attachments={attachments} onChange={setAttachments} />
-
-        {sendMessageMutation.isError ? (
-          <Text style={styles.errorText}>
-            {(sendMessageMutation.error as Error).message || 'Could not send message'}
-          </Text>
-        ) : null}
-
-        <View style={styles.actionRow}>
           <Pressable
-            style={styles.secondaryButton}
+            style={styles.headerAction}
             onPress={() => navigation.navigate('ComplaintDetails', { caseId })}
           >
-            <Text style={styles.secondaryButtonText}>Back</Text>
-          </Pressable>
-          <Pressable
-            style={styles.primaryButton}
-            onPress={handleSend}
-            disabled={sendMessageMutation.isPending}
-          >
-            <Text style={styles.primaryButtonText}>
-              {sendMessageMutation.isPending ? 'Sending...' : 'Send'}
-            </Text>
+            <Text style={styles.headerActionText}>Details</Text>
           </Pressable>
         </View>
-      </View>
-    </KeyboardAvoidingView>
+
+        <ScrollView
+          style={styles.thread}
+          contentContainerStyle={styles.threadContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={messagesQuery.isRefetching}
+              onRefresh={() => messagesQuery.refetch()}
+              tintColor={complaintsTheme.colors.accent}
+            />
+          }
+        >
+          {messagesQuery.data.map((message) => (
+            <ChatBubble key={message.id} message={message} />
+          ))}
+        </ScrollView>
+
+        <View style={styles.composeCard}>
+          <View style={styles.toggleRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.toggleTitle}>Request counseling follow-up</Text>
+              <Text style={styles.toggleHelp}>
+                Turn this on if you want the next message routed for counselor attention.
+              </Text>
+            </View>
+            <Switch
+              value={requestCounseling}
+              onValueChange={setRequestCounseling}
+              trackColor={{ false: '#D0D5DD', true: '#FCC9AE' }}
+              thumbColor={requestCounseling ? complaintsTheme.colors.accent : '#FFFFFF'}
+            />
+          </View>
+
+          <TextInput
+            value={draft}
+            onChangeText={setDraft}
+            placeholder="Write an anonymous follow-up..."
+            placeholderTextColor="#98A2B3"
+            style={styles.input}
+            multiline
+            textAlignVertical="top"
+          />
+
+          <EvidenceUploader attachments={attachments} onChange={setAttachments} />
+
+          {sendMessageMutation.isError ? (
+            <Text style={styles.errorText}>
+              {(sendMessageMutation.error as Error).message || 'Could not send message'}
+            </Text>
+          ) : null}
+
+          <View style={styles.actionRow}>
+            <Pressable
+              style={styles.secondaryButton}
+              onPress={() => navigation.navigate('ComplaintDetails', { caseId })}
+            >
+              <Text style={styles.secondaryButtonText}>Back</Text>
+            </Pressable>
+            <Pressable
+              style={styles.primaryButton}
+              onPress={handleSend}
+              disabled={sendMessageMutation.isPending}
+            >
+              <Text style={styles.primaryButtonText}>
+                {sendMessageMutation.isPending ? 'Sending...' : 'Send'}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: complaintsTheme.colors.background,
+  },
   screen: {
     flex: 1,
     backgroundColor: complaintsTheme.colors.background,
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 80,
   },
   loadingCard: {
     backgroundColor: complaintsTheme.colors.card,
