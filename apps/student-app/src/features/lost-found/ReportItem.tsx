@@ -8,11 +8,14 @@ import {
   ScrollView,
   Platform,
   Alert,
+  Image,
 } from "react-native";
 import { RouteProp, useNavigation, useRoute } from "@react-navigation/native";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import DateTimePicker, {
   DateTimePickerAndroid,
 } from "@react-native-community/datetimepicker";
+import * as ImagePicker from "expo-image-picker";
 
 import type {
   LostFoundStackParamList,
@@ -41,14 +44,15 @@ const categories: ItemCategory[] = [
 export default function ReportItem() {
   const route = useRoute<ReportRoute>();
   const navigation = useNavigation<Navigation>();
+  const reportMode = route.params.mode;
+  const tabBarHeight = useBottomTabBarHeight();
 
   const [step, setStep] = useState<Step>(1);
   const [category, setCategory] = useState<ItemCategory>("ID Card");
   const [title, setTitle] = useState("");
   const [timeHint, setTimeHint] = useState("");
   const [description, setDescription] = useState("");
-  const [imageUrl1, setImageUrl1] = useState("");
-  const [imageUrl2, setImageUrl2] = useState("");
+  const [imageUris, setImageUris] = useState<string[]>([]);
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
@@ -67,15 +71,20 @@ export default function ReportItem() {
 
   // Submit lost item
   const handleSubmit = async () => {
+    if (!title.trim()) {
+      Alert.alert("Title required", "Please add a short title for the item.");
+      return;
+    }
+
     try {
       setSubmitting(true);
       const post = await createLostFoundPost({
-        type: "lost",
+        type: reportMode,
         category,
-        title,
+        title: title.trim(),
         description,
         timeHint,
-        images: [imageUrl1, imageUrl2].filter((u) => u.trim().length > 0),
+        images: imageUris,
       });
 
       setCreatedPostId(post.id); 
@@ -152,6 +161,37 @@ export default function ReportItem() {
     });
   };
 
+  const pickImageFromGallery = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert(
+        "Permission required",
+        "Please allow gallery access to attach item photos."
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.7,
+    });
+
+    if (!result.canceled && result.assets[0]?.uri) {
+      setImageUris((prev) => {
+        if (prev.length >= 4) {
+          Alert.alert("Limit reached", "You can upload up to 4 images.");
+          return prev;
+        }
+        return [...prev, result.assets[0].uri];
+      });
+    }
+  };
+
+  const removeImageAt = (idx: number) => {
+    setImageUris((prev) => prev.filter((_, i) => i !== idx));
+  };
+
   if (submitted)
     return (
       <View style={styles.container}>
@@ -174,7 +214,9 @@ export default function ReportItem() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>I lost an item</Text>
+      <Text style={styles.title}>
+        {reportMode === "lost" ? "I lost an item" : "I found an item"}
+      </Text>
       <Text style={styles.subtitle}>
         Step {step} of 4 ·{" "}
         {step === 1
@@ -198,10 +240,13 @@ export default function ReportItem() {
         ))}
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={[styles.content, { paddingBottom: tabBarHeight + 20 }]}
+        showsVerticalScrollIndicator={false}
+      >
         {/* Step 1: Item Identification */}
         {step === 1 && (
-          <View>
+          <View style={styles.panel}>
             <Text style={styles.sectionTitle}>Item identification</Text>
             <Text style={styles.label}>Category</Text>
             <View style={styles.chipsRow}>
@@ -284,7 +329,7 @@ export default function ReportItem() {
 
         {/* Step 2: Location Context */}
         {step === 2 && (
-          <View>
+          <View style={styles.panel}>
             <Text style={styles.sectionTitle}>Location context</Text>
             <Text style={styles.helperText}>
               Based on your past campus movements for the selected time range,
@@ -313,7 +358,7 @@ export default function ReportItem() {
 
         {/* Step 3: Decision */}
         {step === 3 && (
-          <View>
+          <View style={styles.panel}>
             <Text style={styles.sectionTitle}>Did you already find it?</Text>
             <Text style={styles.helperText}>
               If you found the item while checking the highlighted areas, you
@@ -342,7 +387,7 @@ export default function ReportItem() {
 
         {/* Step 4: Final Details */}
         {step === 4 && (
-          <View>
+          <View style={styles.panel}>
             <Text style={styles.sectionTitle}>Final details</Text>
             <Text style={styles.label}>Description (optional)</Text>
             <TextInput
@@ -355,26 +400,35 @@ export default function ReportItem() {
               value={description}
               onChangeText={setDescription}
             />
-            <Text style={styles.label}>Image URL 1 (optional)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="https://example.com/image1.jpg"
-              value={imageUrl1}
-              onChangeText={setImageUrl1}
-            />
-            <Text style={styles.label}>Image URL 2 (optional)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="https://example.com/image2.jpg"
-              value={imageUrl2}
-              onChangeText={setImageUrl2}
-            />
+            <Text style={styles.label}>Photos (optional)</Text>
+            <TouchableOpacity
+              style={[styles.input, styles.uploadButton]}
+              onPress={pickImageFromGallery}
+            >
+              <Text style={styles.uploadButtonText}>Select image from gallery</Text>
+            </TouchableOpacity>
+            <Text style={styles.helperText}>Up to 4 images can be attached.</Text>
+            {imageUris.length > 0 && (
+              <View style={styles.imageGrid}>
+                {imageUris.map((uri, idx) => (
+                  <View key={`${uri}-${idx}`} style={styles.imageWrap}>
+                    <Image source={{ uri }} style={styles.previewImage} />
+                    <TouchableOpacity
+                      style={styles.removeBadge}
+                      onPress={() => removeImageAt(idx)}
+                    >
+                      <Text style={styles.removeBadgeText}>X</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
         )}
       </ScrollView>
 
       {/* Footer */}
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: tabBarHeight + 8 }]}>
         {step > 1 && step < 4 && (
           <TouchableOpacity style={styles.footerButton} onPress={goBack}>
             <Text style={styles.secondaryButtonText}>Back</Text>
@@ -405,33 +459,79 @@ export default function ReportItem() {
 
 // Styles remain the same
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16, backgroundColor: "#f5f5f9" },
-  title: { fontSize: 20, fontWeight: "700", color: "#111827" },
-  subtitle: { marginTop: 4, fontSize: 14, color: "#6b7280" },
+  container: { flex: 1, padding: 16, backgroundColor: "#F3F6FA" },
+  title: { fontSize: 22, fontWeight: "800", color: "#053668" },
+  subtitle: { marginTop: 4, fontSize: 14, color: "#667085" },
   stepperRow: { flexDirection: "row", marginTop: 12, marginBottom: 8, justifyContent: "space-between" },
-  stepDot: { flex: 1, height: 4, borderRadius: 999, marginHorizontal: 2, backgroundColor: "#e5e7eb" },
-  stepDotActive: { backgroundColor: "#2563eb" },
+  stepDot: { flex: 1, height: 5, borderRadius: 999, marginHorizontal: 2, backgroundColor: "#D0D5DD" },
+  stepDotActive: { backgroundColor: "#053668" },
   content: { paddingVertical: 8 },
-  sectionTitle: { fontSize: 16, fontWeight: "600", color: "#111827", marginBottom: 8 },
-  label: { marginTop: 8, marginBottom: 4, fontSize: 13, color: "#4b5563" },
-  input: { borderRadius: 10, borderWidth: 1, borderColor: "#d1d5db", paddingHorizontal: 12, paddingVertical: 8, backgroundColor: "white", fontSize: 14 },
+  panel: {
+    backgroundColor: "white",
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#E4E7EC",
+  },
+  sectionTitle: { fontSize: 17, fontWeight: "700", color: "#053668", marginBottom: 8 },
+  label: { marginTop: 8, marginBottom: 4, fontSize: 13, color: "#475467" },
+  input: { borderRadius: 12, borderWidth: 1, borderColor: "#D0D5DD", paddingHorizontal: 12, paddingVertical: 10, backgroundColor: "white", fontSize: 14 },
   multilineInput: { textAlignVertical: "top", minHeight: 100 },
   chipsRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: "#d1d5db", backgroundColor: "white" },
-  chipSelected: { backgroundColor: "#2563eb", borderColor: "#2563eb" },
-  chipText: { fontSize: 13, color: "#4b5563" },
+  chip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 999, borderWidth: 1, borderColor: "#D0D5DD", backgroundColor: "white" },
+  chipSelected: { backgroundColor: "#053668", borderColor: "#053668" },
+  chipText: { fontSize: 13, color: "#475467" },
   chipTextSelected: { color: "white", fontWeight: "600" },
-  helperText: { fontSize: 13, color: "#6b7280", marginBottom: 12 },
-  mapMock: { height: 200, borderRadius: 16, backgroundColor: "#dbeafe", overflow: "hidden" },
+  helperText: { fontSize: 13, color: "#667085", marginBottom: 12 },
+  uploadButton: {
+    alignItems: "center",
+    borderStyle: "dashed",
+  },
+  uploadButtonText: {
+    color: "#053668",
+    fontWeight: "700",
+  },
+  imageGrid: {
+    marginTop: 8,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  imageWrap: {
+    position: "relative",
+  },
+  previewImage: {
+    width: 74,
+    height: 74,
+    borderRadius: 10,
+    backgroundColor: "#E4E7EC",
+  },
+  removeBadge: {
+    position: "absolute",
+    right: -6,
+    top: -6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#B42318",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  removeBadgeText: {
+    color: "white",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  mapMock: { height: 200, borderRadius: 16, backgroundColor: "#EAF2FA", overflow: "hidden" },
   mapPoint: { position: "absolute", alignItems: "center" },
-  mapDot: { width: 10, height: 10, borderRadius: 999, backgroundColor: "#2563eb", borderWidth: 2, borderColor: "white" },
-  mapLabel: { marginTop: 2, fontSize: 10, fontWeight: "600", color: "#1e40af" },
+  mapDot: { width: 10, height: 10, borderRadius: 999, backgroundColor: "#053668", borderWidth: 2, borderColor: "white" },
+  mapLabel: { marginTop: 2, fontSize: 10, fontWeight: "600", color: "#053668" },
   decisionRow: { flexDirection: "column", gap: 10, marginTop: 16 },
   decisionButton: { paddingVertical: 12, borderRadius: 999, alignItems: "center", justifyContent: "center" },
-  primaryButton: { backgroundColor: "#2563eb" },
-  secondaryButton: { backgroundColor: "#e5edff", borderWidth: 1, borderColor: "#2563eb" },
-  actionButtonText: { color: "white", fontWeight: "600" },
-  secondaryButtonText: { color: "#2563eb", fontWeight: "600" },
+  primaryButton: { backgroundColor: "#053668" },
+  secondaryButton: { backgroundColor: "#FFF4EB", borderWidth: 1, borderColor: "#FF7100" },
+  actionButtonText: { color: "white", fontWeight: "700" },
+  secondaryButtonText: { color: "#B54708", fontWeight: "700" },
   footer: { flexDirection: "row", justifyContent: "flex-end", gap: 12, paddingTop: 8 },
-  footerButton: { paddingHorizontal: 18, paddingVertical: 10, borderRadius: 999 },
+  footerButton: { paddingHorizontal: 18, paddingVertical: 10, borderRadius: 12 },
 });

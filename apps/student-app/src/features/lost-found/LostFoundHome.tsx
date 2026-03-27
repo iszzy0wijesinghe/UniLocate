@@ -8,6 +8,7 @@ import {
   Image,
 } from "react-native";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import type { LostFoundStackScreenProps } from "../../navigation/LostFoundStack";
 import type { LostFoundPostSummary } from "./lostFound.api";
@@ -17,7 +18,8 @@ type Navigation = LostFoundStackScreenProps<"LostFoundHome">["navigation"];
 
 export default function LostFoundHome() {
   const navigation = useNavigation<Navigation>();
-  const { posts, refetch } = useLostFoundPosts();
+  const { posts, loading, error, refetch } = useLostFoundPosts();
+  const tabBarHeight = useBottomTabBarHeight();
 
   useFocusEffect(
     React.useCallback(() => {
@@ -55,7 +57,7 @@ export default function LostFoundHome() {
       <View style={styles.header}>
         <Text style={styles.title}>Smart Lost &amp; Found</Text>
         <Text style={styles.subtitle}>
-          Campus-only, privacy-friendly lost &amp; found for students.
+          Campus-only reporting with private and secure owner contact.
         </Text>
       </View>
 
@@ -68,14 +70,26 @@ export default function LostFoundHome() {
         </TouchableOpacity>
       </View>
 
-      <Text style={styles.sectionTitle}>Lost item posts</Text>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Open lost-item posts</Text>
+        <Text style={styles.sectionCount}>
+          {
+            posts.filter((p) => p.type === "lost" && p.status === "open")
+              .length
+          }{" "}
+          active
+        </Text>
+      </View>
+      {!!error && <Text style={styles.errorText}>{error}</Text>}
+      {loading && <Text style={styles.loadingText}>Refreshing posts...</Text>}
       <FlatList
         data={posts.filter((p) => p.type === "lost" && p.status === "open")}
         keyExtractor={(item) => item.id}
         renderItem={renderPost}
-        contentContainerStyle={
-          posts.length === 0 ? styles.emptyListContainer : undefined
-        }
+        contentContainerStyle={[
+          posts.length === 0 ? styles.emptyListContainer : undefined,
+          { paddingBottom: tabBarHeight + 24 },
+        ]}
         ListEmptyComponent={
           <Text style={styles.emptyText}>
             No posts yet. Be the first to report a lost or found item.
@@ -90,20 +104,20 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 16,
-    backgroundColor: "#f5f5f9",
+    backgroundColor: "#F3F6FA",
   },
   header: {
     marginBottom: 16,
   },
   title: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#111827",
+    fontSize: 24,
+    fontWeight: "800",
+    color: "#053668",
   },
   subtitle: {
-    marginTop: 4,
+    marginTop: 6,
     fontSize: 14,
-    color: "#6b7280",
+    color: "#667085",
   },
   actionsRow: {
     flexDirection: "row",
@@ -112,13 +126,13 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 999,
+    paddingVertical: 13,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
   },
   primaryButton: {
-    backgroundColor: "#2563eb",
+    backgroundColor: "#053668",
   },
   secondaryButton: {
     backgroundColor: "#e5edff",
@@ -127,28 +141,39 @@ const styles = StyleSheet.create({
   },
   actionButtonText: {
     color: "white",
-    fontWeight: "600",
+    fontWeight: "700",
+    fontSize: 15,
   },
   secondaryButtonText: {
     color: "#2563eb",
     fontWeight: "600",
   },
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
   sectionTitle: {
     fontSize: 16,
-    fontWeight: "600",
-    color: "#374151",
-    marginBottom: 8,
+    fontWeight: "700",
+    color: "#053668",
+  },
+  sectionCount: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#FF7100",
   },
   card: {
     backgroundColor: "white",
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 16,
+    padding: 14,
     marginBottom: 10,
     shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
+    elevation: 2,
   },
   cardRow: {
     flexDirection: "row",
@@ -169,7 +194,7 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     fontSize: 15,
-    fontWeight: "600",
+    fontWeight: "700",
     color: "#111827",
     flex: 1,
     marginRight: 8,
@@ -177,15 +202,15 @@ const styles = StyleSheet.create({
   badge: {
     fontSize: 11,
     fontWeight: "700",
-    color: "#1d4ed8",
-    backgroundColor: "#dbeafe",
+    color: "#053668",
+    backgroundColor: "#E4EEF8",
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 999,
   },
   cardMeta: {
     fontSize: 12,
-    color: "#6b7280",
+    color: "#667085",
   },
   emptyListContainer: {
     flexGrow: 1,
@@ -195,7 +220,17 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
-    color: "#9ca3af",
+    color: "#98A2B3",
     textAlign: "center",
+  },
+  errorText: {
+    marginBottom: 8,
+    color: "#B42318",
+    fontSize: 12,
+  },
+  loadingText: {
+    marginBottom: 8,
+    color: "#667085",
+    fontSize: 12,
   },
 });

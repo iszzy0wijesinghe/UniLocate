@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView } from "react-native";
 import { RouteProp, useNavigation, useRoute } from "@react-navigation/native";
+import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import type {
   LostFoundStackParamList,
@@ -16,6 +17,7 @@ export default function ItemDetails() {
   const navigation = useNavigation<Navigation>();
   const [post, setPost] = useState<LostFoundPostSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const tabBarHeight = useBottomTabBarHeight();
 
   useEffect(() => {
     getPostDetails(route.params.id)
@@ -45,7 +47,7 @@ export default function ItemDetails() {
   const isLost = post.type === "lost";
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={[styles.container, { paddingBottom: tabBarHeight + 24 }]}>
       <View style={styles.headerCard}>
         <View style={styles.headerRow}>
           <Text style={styles.badge}>{post.type.toUpperCase()}</Text>
@@ -122,17 +124,17 @@ const styles = StyleSheet.create({
   container: {
     flexGrow: 1,
     padding: 16,
-    backgroundColor: "#f5f5f9",
+    backgroundColor: "#F3F6FA",
   },
   headerCard: {
     backgroundColor: "white",
     borderRadius: 16,
     padding: 16,
     shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
+    elevation: 2,
   },
   headerRow: {
     flexDirection: "row",
@@ -142,8 +144,8 @@ const styles = StyleSheet.create({
   badge: {
     fontSize: 11,
     fontWeight: "700",
-    color: "#1d4ed8",
-    backgroundColor: "#dbeafe",
+    color: "#053668",
+    backgroundColor: "#E4EEF8",
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 999,
@@ -154,18 +156,18 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 20,
-    fontWeight: "700",
-    color: "#111827",
+    fontWeight: "800",
+    color: "#053668",
   },
   subtitle: {
     fontSize: 14,
-    color: "#6b7280",
+    color: "#667085",
     marginTop: 8,
   },
   meta: {
     marginTop: 4,
     fontSize: 12,
-    color: "#6b7280",
+    color: "#667085",
   },
   section: {
     marginTop: 16,
@@ -173,12 +175,12 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: "600",
-    color: "#111827",
+    color: "#053668",
     marginBottom: 4,
   },
   bodyText: {
     fontSize: 14,
-    color: "#4b5563",
+    color: "#475467",
   },
   footer: {
     marginTop: 24,
@@ -193,19 +195,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   primaryButton: {
-    backgroundColor: "#16a34a",
+    backgroundColor: "#053668",
   },
   primaryButtonText: {
     color: "white",
     fontWeight: "600",
   },
   secondaryButton: {
-    backgroundColor: "#e5edff",
+    backgroundColor: "#FFF4EB",
     borderWidth: 1,
-    borderColor: "#2563eb",
+    borderColor: "#FF7100",
   },
   secondaryButtonText: {
-    color: "#2563eb",
+    color: "#B54708",
     fontWeight: "600",
   },
   image: {

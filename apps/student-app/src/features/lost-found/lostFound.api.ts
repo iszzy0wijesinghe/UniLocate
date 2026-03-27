@@ -18,6 +18,7 @@ export interface LostFoundPost {
 
 const API_URL = API_BASE_URL;
 const FETCH_TIMEOUT_MS = 15_000;
+const localPostsStore: LostFoundPost[] = [];
 
 async function fetchWithTimeout(
   url: string,
@@ -57,6 +58,40 @@ function toSummary(post: LostFoundPost): LostFoundPostSummary {
   return { ...post, relativeTime };
 }
 
+function getLocalSummaries(): LostFoundPostSummary[] {
+  return [...localPostsStore]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .map(toSummary);
+}
+
+function isNetworkFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("failed to fetch") ||
+    message.includes("network request failed") ||
+    message.includes("timed out") ||
+    message.includes("aborted")
+  );
+}
+
+async function getErrorDetails(res: Response): Promise<string> {
+  try {
+    const body = await res.text();
+    if (!body) return `HTTP ${res.status}`;
+    try {
+      const parsed = JSON.parse(body) as { message?: string; error?: string };
+      if (parsed.message) return parsed.message;
+      if (parsed.error) return parsed.error;
+    } catch {
+      // keep plain text body
+    }
+    return body;
+  } catch {
+    return `HTTP ${res.status}`;
+  }
+}
+
 export function useLostFoundPosts() {
   const [posts, setPosts] = useState<LostFoundPostSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -67,10 +102,18 @@ export function useLostFoundPosts() {
       setLoading(true);
       setError(null);
       const res = await fetchWithTimeout(`${API_URL}/lost-found/posts`);
+      if (!res.ok) {
+        throw new Error(`Failed to load posts (${res.status})`);
+      }
       const json = (await res.json()) as LostFoundPost[];
       setPosts(json.map(toSummary));
     } catch (e) {
-      setError("Failed to load posts");
+      setPosts(getLocalSummaries());
+      setError(
+        isNetworkFailure(e)
+          ? "API unavailable. Showing local posts."
+          : "Failed to load posts"
+      );
     } finally {
       setLoading(false);
     }
@@ -86,42 +129,83 @@ export function useLostFoundPosts() {
 export async function createLostFoundPost(
   input: Omit<LostFoundPost, "id" | "createdAt" | "status">
 ): Promise<LostFoundPost> {
-  const res = await fetchWithTimeout(`${API_URL}/lost-found/posts`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  if (!res.ok) {
-    throw new Error("Failed to create post. Make sure the API is running (pnpm -C apps/api dev).");
+  try {
+    const res = await fetchWithTimeout(`${API_URL}/lost-found/posts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) {
+      const details = await getErrorDetails(res);
+      throw new Error(`Failed to create post: ${details}`);
+    }
+    const created = (await res.json()) as LostFoundPost;
+    localPostsStore.unshift(created);
+    return created;
+  } catch (e) {
+    if (!isNetworkFailure(e)) {
+      throw e;
+    }
+    // Offline-first fallback so students can still report immediately.
+    const fallbackPost: LostFoundPost = {
+      id: `local-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      status: "open",
+      ...input,
+    };
+    localPostsStore.unshift(fallbackPost);
+    return fallbackPost;
   }
-  return (await res.json()) as LostFoundPost;
 }
 
 export async function getPostDetails(id: string): Promise<LostFoundPostSummary> {
-  const res = await fetchWithTimeout(`${API_URL}/lost-found/posts/${id}`);
-  if (!res.ok) {
-    throw new Error("Post not found");
+  try {
+    const res = await fetchWithTimeout(`${API_URL}/lost-found/posts/${id}`);
+    if (!res.ok) {
+      throw new Error("Post not found");
+    }
+    const json = (await res.json()) as LostFoundPost;
+    return toSummary(json);
+  } catch (e) {
+    const local = localPostsStore.find((p) => p.id === id);
+    if (local) return toSummary(local);
+    throw e;
   }
-  const json = (await res.json()) as LostFoundPost;
-  return toSummary(json);
 }
 
 export async function resolvePost(id: string): Promise<LostFoundPost> {
-  const res = await fetchWithTimeout(`${API_URL}/lost-found/posts/${id}/resolve`, {
-    method: "POST",
-  });
-  if (!res.ok) {
-    throw new Error("Failed to resolve post");
+  try {
+    const res = await fetchWithTimeout(`${API_URL}/lost-found/posts/${id}/resolve`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      throw new Error("Failed to resolve post");
+    }
+    const resolved = (await res.json()) as LostFoundPost;
+    const idx = localPostsStore.findIndex((p) => p.id === id);
+    if (idx !== -1) localPostsStore[idx] = resolved;
+    return resolved;
+  } catch (e) {
+    const idx = localPostsStore.findIndex((p) => p.id === id);
+    if (idx !== -1) {
+      localPostsStore[idx] = { ...localPostsStore[idx], status: "resolved" };
+      return localPostsStore[idx];
+    }
+    throw e;
   }
-  return (await res.json()) as LostFoundPost;
 }
 
 export const deleteLostFoundPost = async (id: string): Promise<void> => {
-  const res = await fetchWithTimeout(`${API_URL}/lost-found/posts/${id}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) {
-    throw new Error("Failed to delete post");
+  try {
+    const res = await fetchWithTimeout(`${API_URL}/lost-found/posts/${id}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      throw new Error("Failed to delete post");
+    }
+  } finally {
+    const idx = localPostsStore.findIndex((p) => p.id === id);
+    if (idx !== -1) localPostsStore.splice(idx, 1);
   }
 };
 
