@@ -2,6 +2,9 @@ import express, { type Request, type Response } from "express";
 import cors from "cors";
 import "dotenv/config";
 import crypto from "crypto";
+import fs from "fs";
+import path from "path";
+import multer from "multer";
 import { z } from "zod";
 import { pool } from "./db";
 
@@ -21,23 +24,12 @@ app.get("/health", async (_req: Request, res: Response) => {
 });
 
 //
-// 🔹 LOST & FOUND (temporary in-memory store)
+// 🔹 LOST & FOUND + CHAT (database-backed)
 //
 
 type LostFoundType = "lost" | "found";
 type ItemCategory = "ID Card" | "Wallet" | "Book" | "Device" | "Other";
-
-interface LostFoundPost {
-  id: string;
-  type: LostFoundType;
-  category: ItemCategory;
-  title: string;
-  description?: string;
-  timeHint?: string;
-  images?: string[];
-  createdAt: string;
-  status: "open" | "resolved";
-}
+type ChatRole = "owner" | "finder";
 
 const LostFoundInputSchema = z.object({
   type: z.union([z.literal("lost"), z.literal("found")]),
@@ -51,56 +43,433 @@ const LostFoundInputSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
   timeHint: z.string().optional(),
-  images: z.array(z.string()).optional(),
+  images: z.array(z.string()).optional().default([]),
 });
 
-const lostFoundPosts: LostFoundPost[] = [];
+const FounderReportSchema = z.object({
+  placeFound: z.string().optional(),
+  whenFound: z.string().optional(),
+  description: z.string().optional(),
+  imageUrls: z.array(z.string()).optional().default([]),
+});
 
-app.get("/lost-found/posts", (_req: Request, res: Response) => {
-  const sorted = [...lostFoundPosts].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+const SendLostFoundMessageSchema = z.object({
+  senderRole: z.union([z.literal("owner"), z.literal("finder")]),
+  body: z.string().min(1),
+});
+
+const ReadNotificationsSchema = z.object({
+  chatId: z.string().uuid(),
+  recipientRole: z.union([z.literal("owner"), z.literal("finder")]),
+});
+
+const uploadsRoot = path.resolve(process.cwd(), "uploads");
+const lostFoundUploadDir = path.join(uploadsRoot, "lost-found");
+fs.mkdirSync(lostFoundUploadDir, { recursive: true });
+app.use("/uploads", express.static(uploadsRoot));
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req: any, _file: any, cb: any) => cb(null, lostFoundUploadDir),
+    filename: (_req: any, file: any, cb: any) => {
+      const ext = path.extname(file.originalname || ".jpg");
+      cb(null, `${crypto.randomUUID()}${ext}`);
+    },
+  }),
+});
+
+async function ensureLostFoundTables() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS lost_found_posts (
+      id UUID PRIMARY KEY,
+      type TEXT NOT NULL CHECK (type IN ('lost','found')),
+      category TEXT NOT NULL CHECK (category IN ('ID Card','Wallet','Book','Device','Other')),
+      title TEXT NOT NULL,
+      description TEXT,
+      time_hint TEXT,
+      status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS lost_found_images (
+      id UUID PRIMARY KEY,
+      post_id UUID NOT NULL REFERENCES lost_found_posts(id) ON DELETE CASCADE,
+      image_url TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS lost_found_chats (
+      id UUID PRIMARY KEY,
+      post_id UUID NOT NULL UNIQUE REFERENCES lost_found_posts(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_message_at TIMESTAMPTZ
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS lost_found_messages (
+      id UUID PRIMARY KEY,
+      chat_id UUID NOT NULL REFERENCES lost_found_chats(id) ON DELETE CASCADE,
+      sender_role TEXT NOT NULL CHECK (sender_role IN ('owner','finder','system')),
+      body TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS lost_found_founder_reports (
+      id UUID PRIMARY KEY,
+      post_id UUID NOT NULL REFERENCES lost_found_posts(id) ON DELETE CASCADE,
+      place_found TEXT,
+      when_found TIMESTAMPTZ,
+      description TEXT,
+      image_urls TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS lost_found_notifications (
+      id UUID PRIMARY KEY,
+      post_id UUID NOT NULL REFERENCES lost_found_posts(id) ON DELETE CASCADE,
+      chat_id UUID NOT NULL REFERENCES lost_found_chats(id) ON DELETE CASCADE,
+      message_id UUID NOT NULL REFERENCES lost_found_messages(id) ON DELETE CASCADE,
+      recipient_role TEXT NOT NULL CHECK (recipient_role IN ('owner','finder')),
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      is_read BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+}
+
+async function getOrCreateChatId(postId: string) {
+  const existing = await pool.query(
+    `SELECT id FROM lost_found_chats WHERE post_id = $1 LIMIT 1`,
+    [postId]
   );
-  res.json(sorted);
-});
+  if (existing.rows.length > 0) return existing.rows[0].id as string;
 
-app.post("/lost-found/posts", (req: Request, res: Response) => {
-  const parsed = LostFoundInputSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ ok: false, error: parsed.error.flatten() });
+  const chatId = crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO lost_found_chats (id, post_id, created_at, updated_at, last_message_at)
+     VALUES ($1, $2, NOW(), NOW(), NOW())`,
+    [chatId, postId]
+  );
+  return chatId;
+}
+
+async function getPostWithImages(postId: string) {
+  const result = await pool.query(
+    `
+    SELECT
+      p.id,
+      p.type,
+      p.category,
+      p.title,
+      p.description,
+      p.time_hint as "timeHint",
+      p.status,
+      p.created_at as "createdAt",
+      COALESCE(
+        ARRAY_AGG(i.image_url ORDER BY i.created_at) FILTER (WHERE i.id IS NOT NULL),
+        ARRAY[]::TEXT[]
+      ) as images
+    FROM lost_found_posts p
+    LEFT JOIN lost_found_images i ON i.post_id = p.id
+    WHERE p.id = $1
+    GROUP BY p.id
+    `,
+    [postId]
+  );
+  return result.rows[0] ?? null;
+}
+
+app.post("/lost-found/uploads/image", upload.single("image"), (req: Request, res: Response) => {
+  const uploaded = req as Request & { file?: { filename: string } };
+  if (!uploaded.file) {
+    return res.status(400).json({ message: "Image file is required" });
   }
 
-  const now = new Date();
-  const post: LostFoundPost = {
-    id: now.getTime().toString(),
-    createdAt: now.toISOString(),
-    status: "open",
-    ...parsed.data,
-  };
-
-  lostFoundPosts.push(post);
-  res.status(201).json(post);
+  const host = req.get("host");
+  const protocol = req.protocol;
+  const url = `${protocol}://${host}/uploads/lost-found/${uploaded.file.filename}`;
+  return res.status(201).json({ url });
 });
 
-app.get("/lost-found/posts/:id", (req: Request, res: Response) => {
-  const post = lostFoundPosts.find((p) => p.id === req.params.id);
-  if (!post) return res.status(404).json({ ok: false, message: "Not found" });
-  res.json(post);
+app.get("/lost-found/posts", async (_req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT
+        p.id,
+        p.type,
+        p.category,
+        p.title,
+        p.description,
+        p.time_hint as "timeHint",
+        p.status,
+        p.created_at as "createdAt",
+        COALESCE(
+          ARRAY_AGG(i.image_url ORDER BY i.created_at) FILTER (WHERE i.id IS NOT NULL),
+          ARRAY[]::TEXT[]
+        ) as images
+      FROM lost_found_posts p
+      LEFT JOIN lost_found_images i ON i.post_id = p.id
+      GROUP BY p.id
+      ORDER BY p.created_at DESC
+      `
+    );
+    return res.json(rows);
+  } catch (e) {
+    console.error("DB error in GET /lost-found/posts:", e);
+    return res.status(503).json({ message: "Database unavailable" });
+  }
 });
 
-app.post("/lost-found/posts/:id/resolve", (req: Request, res: Response) => {
-  const post = lostFoundPosts.find((p) => p.id === req.params.id);
-  if (!post) return res.status(404).json({ ok: false, message: "Not found" });
+app.post("/lost-found/posts", async (req: Request, res: Response) => {
+  try {
+    const parsed = LostFoundInputSchema.parse(req.body);
+    const id = crypto.randomUUID();
+    await pool.query(
+      `
+      INSERT INTO lost_found_posts (id, type, category, title, description, time_hint, status, created_at, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,'open',NOW(),NOW())
+      `,
+      [id, parsed.type, parsed.category, parsed.title, parsed.description ?? null, parsed.timeHint ?? null]
+    );
 
-  post.status = "resolved";
-  res.json(post);
+    for (const imageUrl of parsed.images) {
+      await pool.query(
+        `INSERT INTO lost_found_images (id, post_id, image_url, created_at) VALUES ($1,$2,$3,NOW())`,
+        [crypto.randomUUID(), id, imageUrl]
+      );
+    }
+
+    const post = await getPostWithImages(id);
+    return res.status(201).json(post);
+  } catch (e) {
+    console.error("DB error in POST /lost-found/posts:", e);
+    return res.status(400).json({ message: e instanceof Error ? e.message : "Could not create post" });
+  }
 });
 
-app.delete("/lost-found/posts/:id", (req: Request, res: Response) => {
-  const idx = lostFoundPosts.findIndex((p) => p.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ ok: false, message: "Not found" });
+app.get("/lost-found/posts/:id", async (req: Request, res: Response) => {
+  try {
+    const post = await getPostWithImages(req.params.id);
+    if (!post) return res.status(404).json({ message: "Not found" });
+    return res.json(post);
+  } catch (e) {
+    console.error("DB error in GET /lost-found/posts/:id:", e);
+    return res.status(503).json({ message: "Database unavailable" });
+  }
+});
 
-  lostFoundPosts.splice(idx, 1);
-  res.status(204).send();
+app.post("/lost-found/posts/:id/resolve", async (req: Request, res: Response) => {
+  try {
+    const { rowCount } = await pool.query(
+      `UPDATE lost_found_posts SET status = 'resolved', updated_at = NOW() WHERE id = $1`,
+      [req.params.id]
+    );
+    if (!rowCount) return res.status(404).json({ message: "Not found" });
+    const post = await getPostWithImages(req.params.id);
+    return res.json(post);
+  } catch (e) {
+    console.error("DB error in POST /lost-found/posts/:id/resolve:", e);
+    return res.status(503).json({ message: "Database unavailable" });
+  }
+});
+
+app.delete("/lost-found/posts/:id", async (req: Request, res: Response) => {
+  try {
+    const { rowCount } = await pool.query(`DELETE FROM lost_found_posts WHERE id = $1`, [req.params.id]);
+    if (!rowCount) return res.status(404).json({ message: "Not found" });
+    return res.status(204).send();
+  } catch (e) {
+    console.error("DB error in DELETE /lost-found/posts/:id:", e);
+    return res.status(503).json({ message: "Database unavailable" });
+  }
+});
+
+app.post("/lost-found/posts/:id/founder-report", async (req: Request, res: Response) => {
+  try {
+    const postId = req.params.id;
+    const parsed = FounderReportSchema.parse(req.body);
+    const post = await getPostWithImages(postId);
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    await pool.query(
+      `
+      INSERT INTO lost_found_founder_reports (id, post_id, place_found, when_found, description, image_urls, created_at)
+      VALUES ($1,$2,$3,$4,$5,$6,NOW())
+      `,
+      [
+        crypto.randomUUID(),
+        postId,
+        parsed.placeFound ?? null,
+        parsed.whenFound ? new Date(parsed.whenFound) : null,
+        parsed.description ?? null,
+        parsed.imageUrls,
+      ]
+    );
+
+    const chatId = await getOrCreateChatId(postId);
+    const lines: string[] = [];
+    if (parsed.placeFound?.trim()) lines.push(`Place found: ${parsed.placeFound.trim()}`);
+    if (parsed.whenFound) lines.push(`Time found: ${new Date(parsed.whenFound).toLocaleString()}`);
+    if (parsed.description?.trim()) lines.push(`Finder description: ${parsed.description.trim()}`);
+    if (parsed.imageUrls.length) lines.push(`Photos: ${parsed.imageUrls.join(", ")}`);
+    const initialBody =
+      lines.length > 0
+        ? `Hi, I found an item that may be yours.\n${lines.join("\n")}\nPlease confirm details to verify ownership.`
+        : "Hi, I found an item that may be yours. Please confirm details to verify ownership.";
+
+    const messageId = crypto.randomUUID();
+    await pool.query(
+      `
+      INSERT INTO lost_found_messages (id, chat_id, sender_role, body, created_at)
+      VALUES ($1,$2,'finder',$3,NOW())
+      `,
+      [messageId, chatId, initialBody]
+    );
+    await pool.query(
+      `
+      UPDATE lost_found_chats
+      SET updated_at = NOW(), last_message_at = NOW()
+      WHERE id = $1
+      `,
+      [chatId]
+    );
+    await pool.query(
+      `
+      INSERT INTO lost_found_notifications (id, post_id, chat_id, message_id, recipient_role, title, body, is_read, created_at)
+      VALUES ($1,$2,$3,$4,'owner',$5,$6,FALSE,NOW())
+      `,
+      [crypto.randomUUID(), postId, chatId, messageId, "UniLocate Lost & Found", "A finder sent you a new message."]
+    );
+
+    return res.status(201).json({ chatId, initialMessage: initialBody });
+  } catch (e) {
+    console.error("DB error in POST /lost-found/posts/:id/founder-report:", e);
+    return res.status(400).json({ message: e instanceof Error ? e.message : "Could not submit founder report" });
+  }
+});
+
+app.get("/lost-found/posts/:id/chat", async (req: Request, res: Response) => {
+  try {
+    const postId = req.params.id;
+    const viewerRoleRaw = String(req.query.viewerRole ?? "owner");
+    const viewerRole: ChatRole = viewerRoleRaw === "finder" ? "finder" : "owner";
+    const chatId = await getOrCreateChatId(postId);
+
+    const messagesResult = await pool.query(
+      `
+      SELECT id, sender_role, body, created_at
+      FROM lost_found_messages
+      WHERE chat_id = $1
+      ORDER BY created_at ASC
+      `,
+      [chatId]
+    );
+
+    const notificationsResult = await pool.query(
+      `
+      SELECT COUNT(*)::int as unread
+      FROM lost_found_notifications
+      WHERE chat_id = $1 AND recipient_role = $2 AND is_read = FALSE
+      `,
+      [chatId, viewerRole]
+    );
+
+    return res.json({
+      chatId,
+      unreadCount: notificationsResult.rows[0]?.unread ?? 0,
+      messages: messagesResult.rows.map((row) => ({
+        id: row.id,
+        senderRole: row.sender_role,
+        body: row.body,
+        createdAt: row.created_at,
+      })),
+    });
+  } catch (e) {
+    console.error("DB error in GET /lost-found/posts/:id/chat:", e);
+    return res.status(400).json({ message: "Could not load chat" });
+  }
+});
+
+app.post("/lost-found/chats/:chatId/messages", async (req: Request, res: Response) => {
+  try {
+    const parsed = SendLostFoundMessageSchema.parse(req.body);
+    const chatId = req.params.chatId;
+    const messageId = crypto.randomUUID();
+    const recipientRole: ChatRole = parsed.senderRole === "finder" ? "owner" : "finder";
+
+    const chatResult = await pool.query(
+      `SELECT id, post_id FROM lost_found_chats WHERE id = $1 LIMIT 1`,
+      [chatId]
+    );
+    if (chatResult.rows.length === 0) return res.status(404).json({ message: "Chat not found" });
+
+    await pool.query(
+      `
+      INSERT INTO lost_found_messages (id, chat_id, sender_role, body, created_at)
+      VALUES ($1,$2,$3,$4,NOW())
+      `,
+      [messageId, chatId, parsed.senderRole, parsed.body]
+    );
+    await pool.query(
+      `UPDATE lost_found_chats SET updated_at = NOW(), last_message_at = NOW() WHERE id = $1`,
+      [chatId]
+    );
+    await pool.query(
+      `
+      INSERT INTO lost_found_notifications (id, post_id, chat_id, message_id, recipient_role, title, body, is_read, created_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE,NOW())
+      `,
+      [
+        crypto.randomUUID(),
+        chatResult.rows[0].post_id,
+        chatId,
+        messageId,
+        recipientRole,
+        "UniLocate Lost & Found",
+        "You have a new secure chat message.",
+      ]
+    );
+
+    return res.status(201).json({
+      id: messageId,
+      senderRole: parsed.senderRole,
+      body: parsed.body,
+      createdAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.error("DB error in POST /lost-found/chats/:chatId/messages:", e);
+    return res.status(400).json({ message: e instanceof Error ? e.message : "Could not send message" });
+  }
+});
+
+app.post("/lost-found/notifications/read", async (req: Request, res: Response) => {
+  try {
+    const parsed = ReadNotificationsSchema.parse(req.body);
+    await pool.query(
+      `
+      UPDATE lost_found_notifications
+      SET is_read = TRUE
+      WHERE chat_id = $1 AND recipient_role = $2 AND is_read = FALSE
+      `,
+      [parsed.chatId, parsed.recipientRole]
+    );
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(400).json({ message: e instanceof Error ? e.message : "Could not mark notifications as read" });
+  }
 });
 
 // 1) Download zones
@@ -714,6 +1083,32 @@ app.post("/api/public/cases/me/messages", async (req: Request, res: Response) =>
 const port = Number(process.env.PORT || 4000);
 const host = "0.0.0.0";
 
+let lostFoundDbReady = false;
+
+ensureLostFoundTables()
+  .then(() => {
+    lostFoundDbReady = true;
+    console.log("Lost & Found DB tables ready.");
+  })
+  .catch((error) => {
+    console.error("Failed to initialize Lost & Found tables:", error);
+    console.error(
+      "Lost & Found DB is disabled until DATABASE_URL is fixed. API still starts for troubleshooting."
+    );
+  })
+  .finally(() => {
 app.listen(port, host, () => {
   console.log(`API running on http://localhost:${port} (also http://0.0.0.0:${port})`);
+    });
+  });
+
+app.get("/lost-found/status", (_req: Request, res: Response) => {
+  if (!lostFoundDbReady) {
+    return res.status(503).json({
+      ok: false,
+      message:
+        "Lost & Found DB is not ready. Check apps/api/.env DATABASE_URL. Expected format: postgres://user:password@host:5432/dbname",
+    });
+  }
+  return res.json({ ok: true });
 });

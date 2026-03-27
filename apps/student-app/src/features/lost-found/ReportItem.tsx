@@ -26,6 +26,7 @@ import {
   deleteLostFoundPost,
   getMockLocationTrail,
   type ItemCategory,
+  uploadLostFoundImage,
 } from "./lostFound.api";
 
 type ReportRoute = RouteProp<LostFoundStackParamList, "ReportItem">;
@@ -61,60 +62,122 @@ export default function ReportItem() {
 
   const locationTrail = getMockLocationTrail();
 
-  const goNext = () => {
-    if (step < 4) setStep((s) => ((s + 1) as Step));
-  };
+ const goNext = () => {
+  // ✅ Step 1 validation
+  if (step === 1) {
+    if (!title.trim()) {
+      Alert.alert("Title required", "Please add a short title.");
+      return;
+    }
+
+    if (title.trim().length < 3) {
+      Alert.alert("Invalid title", "Title must be at least 3 characters.");
+      return;
+    }
+
+    if (!approxDateTime) {
+      Alert.alert(
+        "Date & Time required",
+        "Please select the date and time."
+      );
+      return;
+    }
+  }
+
+  // ✅ move to next step
+  if (step < 4) setStep((s) => ((s + 1) as Step));
+};
 
   const goBack = () => {
     if (step > 1) setStep((s) => ((s - 1) as Step));
   };
 
   // Submit lost item
-  const handleSubmit = async () => {
-    if (!title.trim()) {
-      Alert.alert("Title required", "Please add a short title for the item.");
-      return;
+const handleSubmit = async () => {
+  // ✅ Title validation
+  if (!title.trim()) {
+    Alert.alert("Title required", "Please add a short title for the item.");
+    return;
+  }
+
+  if (title.trim().length < 3) {
+    Alert.alert("Invalid title", "Title must be at least 3 characters long.");
+    return;
+  }
+
+  // ✅ Date & Time validation
+  if (!approxDateTime) {
+    Alert.alert(
+      "Date & Time required",
+      "Please select the approximate date and time."
+    );
+    return;
+  }
+
+  try {
+    setSubmitting(true);
+
+    const uploadedImageUrls: string[] = [];
+    for (const uri of imageUris) {
+      const url = await uploadLostFoundImage(uri);
+      uploadedImageUrls.push(url);
     }
 
-    try {
-      setSubmitting(true);
-      const post = await createLostFoundPost({
-        type: reportMode,
-        category,
-        title: title.trim(),
-        description,
-        timeHint,
-        images: imageUris,
-      });
+    const post = await createLostFoundPost({
+      type: reportMode,
+      category,
+      title: title.trim(),
+      description,
+      timeHint,
+      images: uploadedImageUrls,
+    });
 
-      setCreatedPostId(post.id); 
+    setCreatedPostId(post.id);
+    setSubmitted(true);
 
-      setSubmitted(true);
-
-      setTimeout(() => {
-        navigation.navigate("LostFoundHome");
-      }, 800);
-    } catch (err) {
-      console.error(err);
-      Alert.alert(
-        "Could not post item",
-        (err as Error).message || "Network error. Start the API with: pnpm -C apps/api dev"
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  };
+    setTimeout(() => {
+      navigation.navigate("LostFoundHome");
+    }, 800);
+  } catch (err) {
+    console.error(err);
+    Alert.alert(
+      "Could not post item",
+      (err as Error).message || "Network error. Start the API with: pnpm -C apps/api dev"
+    );
+  } finally {
+    setSubmitting(false);
+  }
+};
 
   // Delete post if item is collected
   const handleCollectedItem = async () => {
-    if (!createdPostId) return;
-    try {
-      await deleteLostFoundPost(createdPostId);
-      setSubmitted(true);
-      setCreatedPostId(null);
-    } catch (err) {
-      console.error(err);
-    }
+    Alert.alert(
+      "Item collected?",
+      createdPostId
+        ? "This will delete your lost-item post permanently. Continue?"
+        : "Great! Since you already collected your item, do you want to stop and go back home?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: createdPostId ? "Delete post" : "Yes, go home",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              if (createdPostId) {
+                await deleteLostFoundPost(createdPostId);
+                setSubmitted(true);
+                setCreatedPostId(null);
+                return;
+              }
+              navigation.navigate("LostFoundHome");
+            } catch (err) {
+              console.error(err);
+              Alert.alert("Could not remove post", (err as Error).message);
+            }
+          },
+        },
+      ]
+    );
   };
 
   // Handle date selection for mobile
@@ -172,7 +235,7 @@ export default function ReportItem() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ["images"],
       allowsEditing: true,
       quality: 0.7,
     });

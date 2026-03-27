@@ -1,17 +1,22 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: false,
-    shouldSetBadge: false,
-  }),
-});
+const isDevClientLike = __DEV__;
+
+if (!isDevClientLike) {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+      shouldPlaySound: false,
+      shouldSetBadge: false,
+    }),
+  });
+}
 
 export async function requestNotificationPermission() {
+  if (isDevClientLike || Platform.OS === "web") return false;
   const { status } = await Notifications.getPermissionsAsync();
   let finalStatus = status;
 
@@ -24,22 +29,33 @@ export async function requestNotificationPermission() {
 }
 
 export async function scheduleFinderNotification(postTitle: string) {
-  const granted = await requestNotificationPermission();
-  if (!granted) {
-    console.warn("Permission denied for notifications");
-    return;
+  try {
+    const granted = await requestNotificationPermission();
+    if (!granted) return;
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "UniLocate Reminder",
+        body: `Someone may have information about: ${postTitle}`,
+      },
+      trigger: null as any,
+    });
+  } catch {
+    // Ignore notification errors in development clients.
   }
+}
 
-  if (Platform.OS === "web") {
-    console.warn("Reminder notifications are not supported on web");
-    return;
+export async function scheduleOwnerNotification(postTitle: string) {
+  try {
+    const granted = await requestNotificationPermission();
+    if (!granted) return;
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "New Finder Message",
+        body: `A finder sent a secure message about: ${postTitle}`,
+      },
+      trigger: null as any,
+    });
+  } catch {
+    // Ignore notification errors in development clients.
   }
-
-  await Notifications.scheduleNotificationAsync({
-    content: {
-      title: "UniLocate Reminder",
-      body: `Someone may have information about: ${postTitle}`,
-    },
-    trigger: null as any,
-  });
 }

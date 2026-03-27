@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, Alert } from "react-native";
 import { RouteProp, useNavigation, useRoute } from "@react-navigation/native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
@@ -7,7 +7,12 @@ import type {
   LostFoundStackParamList,
   LostFoundStackScreenProps,
 } from "../../navigation/LostFoundStack";
-import { getPostDetails, resolvePost, type LostFoundPostSummary } from "./lostFound.api";
+import {
+  deleteLostFoundPost,
+  getPostDetails,
+  resolvePost,
+  type LostFoundPostSummary,
+} from "./lostFound.api";
 
 type DetailsRoute = RouteProp<LostFoundStackParamList, "ItemDetails">;
 type Navigation = LostFoundStackScreenProps<"ItemDetails">["navigation"];
@@ -90,6 +95,18 @@ export default function ItemDetails() {
 
       <View style={styles.footer}>
         <TouchableOpacity
+          style={[styles.footerButton, styles.chatButton]}
+          onPress={() =>
+            navigation.navigate("Chat", {
+              postId: post.id,
+              viewerRole: "owner",
+              postTitle: post.title,
+            })
+          }
+        >
+          <Text style={styles.chatButtonText}>Open secure chat</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
           style={[styles.footerButton, styles.secondaryButton]}
           onPress={() =>
             navigation.navigate("FoundReport", {
@@ -103,11 +120,33 @@ export default function ItemDetails() {
         <TouchableOpacity
           style={[styles.footerButton, styles.primaryButton]}
           onPress={async () => {
+            if (isLost) {
+              Alert.alert(
+                "Confirm deletion",
+                "This will delete your post permanently. Continue?",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Delete",
+                    style: "destructive",
+                    onPress: async () => {
+                      try {
+                        await deleteLostFoundPost(post.id);
+navigation.navigate("Home", { refresh: true });
+                      } catch {
+                        Alert.alert("Error", "Failed to delete post.");
+                      }
+                    },
+                  },
+                ]
+              );
+              return;
+            }
             try {
               await resolvePost(post.id);
               navigation.goBack();
             } catch {
-              // Optionally show an error toast
+              Alert.alert("Error", "Failed to update post.");
             }
           }}
         >
@@ -184,7 +223,6 @@ const styles = StyleSheet.create({
   },
   footer: {
     marginTop: 24,
-    flexDirection: "row",
     gap: 12,
   },
   footerButton: {
@@ -196,6 +234,15 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     backgroundColor: "#053668",
+  },
+  chatButton: {
+    backgroundColor: "#E4EEF8",
+    borderWidth: 1,
+    borderColor: "#053668",
+  },
+  chatButtonText: {
+    color: "#053668",
+    fontWeight: "700",
   },
   primaryButtonText: {
     color: "white",

@@ -12,7 +12,7 @@ export type LostFoundStackParamList = {
   ReportItem: { mode: "lost" | "found" };
   ItemDetails: { id: string };
   FoundReport: { postId: string; postTitle?: string };
-  Chat: { postId: string; initialMessage?: string };
+  Chat: { postId: string; viewerRole?: "owner" | "finder"; postTitle?: string };
 };
 
 export type LostFoundStackScreenProps<T extends keyof LostFoundStackParamList> =

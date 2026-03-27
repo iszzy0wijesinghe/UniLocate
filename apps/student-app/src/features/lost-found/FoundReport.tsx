@@ -8,6 +8,7 @@ import {
   ScrollView,
   Alert,
   Image,
+  Platform,
 } from "react-native";
 import { RouteProp, useNavigation, useRoute } from "@react-navigation/native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
@@ -16,9 +17,12 @@ import type {
   LostFoundStackParamList,
   LostFoundStackScreenProps,
 } from "../../navigation/LostFoundStack";
-import DateTimePicker from "@react-native-community/datetimepicker";
-import { scheduleFinderNotification } from "../../notifications";
+import DateTimePicker, {
+  DateTimePickerAndroid,
+} from "@react-native-community/datetimepicker";
+import { scheduleOwnerNotification } from "../../notifications";
 import * as ImagePicker from "expo-image-picker";
+import { submitFounderReport, uploadLostFoundImage } from "./lostFound.api";
 
 type FoundRoute = RouteProp<LostFoundStackParamList, "FoundReport">;
 type Navigation = LostFoundStackScreenProps<"FoundReport">["navigation"];
@@ -31,14 +35,47 @@ export default function FoundReport() {
   const [placeFound, setPlaceFound] = useState("");
   const [description, setDescription] = useState("");
   const [imageUris, setImageUris] = useState<string[]>([]);
-  const [whenFound, setWhenFound] = useState<Date | null>(new Date());
+const [whenFound, setWhenFound] = useState<Date | null>(null);
   const [showPicker, setShowPicker] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const onChangeDate = (_: any, selected?: Date) => {
     setShowPicker(false);
     if (selected) {
       setWhenFound(selected);
     }
+  };
+
+  const openAndroidDateTimePicker = () => {
+    const base = whenFound ?? new Date();
+    DateTimePickerAndroid.open({
+      value: base,
+      mode: "date",
+      is24Hour: true,
+      onChange: (event: any, selectedDate?: Date) => {
+        if (event?.type === "dismissed" || !selectedDate) return;
+
+        const withDate = new Date(base);
+        withDate.setFullYear(
+          selectedDate.getFullYear(),
+          selectedDate.getMonth(),
+          selectedDate.getDate()
+        );
+
+        DateTimePickerAndroid.open({
+          value: withDate,
+          mode: "time",
+          is24Hour: true,
+          onChange: (event2: any, selectedTime?: Date) => {
+            if (event2?.type === "dismissed" || !selectedTime) return;
+
+            const final = new Date(withDate);
+            final.setHours(selectedTime.getHours(), selectedTime.getMinutes(), 0, 0);
+            setWhenFound(final);
+          },
+        });
+      },
+    });
   };
 
   const pickImageFromGallery = async () => {
@@ -52,7 +89,7 @@ export default function FoundReport() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ["images"],
       allowsEditing: true,
       quality: 0.7,
     });
@@ -72,35 +109,53 @@ export default function FoundReport() {
     setImageUris((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  const handleSubmit = async () => {
-    const lines: string[] = [];
-    if (placeFound.trim()) {
-      lines.push(`Place found: ${placeFound.trim()}`);
-    }
-    if (whenFound) {
-      lines.push(`Time found: ${whenFound.toLocaleString()}`);
-    }
-    if (description.trim()) {
-      lines.push(`Finder description: ${description.trim()}`);
-    }
-    if (imageUris.length > 0) {
-      lines.push(`Attached photos: ${imageUris.length}`);
+const handleSubmit = async () => {
+  // ✅ Place validation
+  if (!placeFound.trim()) {
+    Alert.alert("Location required", "Please enter where you found the item.");
+    return;
+  }
+
+  if (placeFound.trim().length < 3) {
+    Alert.alert("Invalid location", "Please enter a more specific location.");
+    return;
+  }
+
+  // ✅ Date validation (optional logic improvement)
+  if (!whenFound) {
+    Alert.alert("Date & Time required", "Please select when you found the item.");
+    return;
+  }
+
+  try {
+    setSubmitting(true);
+
+    const uploadedImageUrls: string[] = [];
+    for (const uri of imageUris) {
+      const url = await uploadLostFoundImage(uri);
+      uploadedImageUrls.push(url);
     }
 
-    const initialMessage =
-      lines.length > 0
-        ? `Hi, I found an item that may be yours:\n\n${lines.join(
-            "\n"
-          )}\n\nCan you confirm some details to verify ownership?`
-        : "Hi, I found an item that may be yours. Can you confirm some details to verify ownership?";
+    await submitFounderReport(route.params.postId, {
+      placeFound: placeFound.trim(),
+      whenFound: whenFound.toISOString(),
+      description: description.trim() || undefined,
+      imageUrls: uploadedImageUrls,
+    });
 
-    await scheduleFinderNotification(route.params.postTitle ?? "your item");
+    await scheduleOwnerNotification(route.params.postTitle ?? "your item");
 
     navigation.navigate("Chat", {
       postId: route.params.postId,
-      initialMessage,
+      viewerRole: "finder",
+      postTitle: route.params.postTitle,
     });
-  };
+  } catch (e) {
+    Alert.alert("Could not submit", (e as Error).message);
+  } finally {
+    setSubmitting(false);
+  }
+};
 
   return (
     <View style={styles.container}>
@@ -125,7 +180,13 @@ export default function FoundReport() {
         <Text style={styles.label}>When did you find it?</Text>
         <TouchableOpacity
           style={styles.pickerButton}
-          onPress={() => setShowPicker(true)}
+          onPress={() => {
+            if (Platform.OS === "android") {
+              openAndroidDateTimePicker();
+              return;
+            }
+            setShowPicker(true);
+          }}
         >
           <Text style={styles.pickerButtonText}>
             {whenFound
@@ -133,7 +194,7 @@ export default function FoundReport() {
               : "Select date & time from calendar"}
           </Text>
         </TouchableOpacity>
-        {showPicker && (
+        {Platform.OS !== "android" && showPicker && (
           <DateTimePicker
             value={whenFound ?? new Date()}
             mode="datetime"
@@ -182,7 +243,9 @@ export default function FoundReport() {
           style={[styles.footerButton, styles.primaryButton]}
           onPress={handleSubmit}
         >
-          <Text style={styles.footerButtonText}>Send to owner & open chat</Text>
+          <Text style={styles.footerButtonText}>
+            {submitting ? "Sending..." : "Send to owner & open chat"}
+          </Text>
         </TouchableOpacity>
       </View>
     </View>

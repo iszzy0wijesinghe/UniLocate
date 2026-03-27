@@ -95,7 +95,8 @@ function convertBackendZones(zones: Zone[]): CampusZone[] {
     .filter(Boolean) as CampusZone[];
 }
 
-function convertBoundary(boundary: Boundary): CampusBoundary | null {
+function convertBoundary(boundary: Boundary | null): CampusBoundary | null {
+  if (!boundary) return null;
   let coords: unknown;
 
   if (boundary.polygon_geojson?.type === "Polygon") {

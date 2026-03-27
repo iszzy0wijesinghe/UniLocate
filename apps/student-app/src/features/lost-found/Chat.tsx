@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -6,71 +6,93 @@ import {
   FlatList,
   TextInput,
   TouchableOpacity,
+  Image,
 } from "react-native";
 import { RouteProp, useRoute } from "@react-navigation/native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 
 import type { LostFoundStackParamList } from "../../navigation/LostFoundStack";
+import {
+  getPostChat,
+  markChatNotificationsRead,
+  sendPostChatMessage,
+  type ChatRole,
+  type LostFoundChatMessage,
+} from "./lostFound.api";
+import { scheduleOwnerNotification } from "../../notifications";
 
 type ChatRoute = RouteProp<LostFoundStackParamList, "Chat">;
-
-interface Message {
-  id: string;
-  fromSelf: boolean;
-  text: string;
-  time: string;
-}
 
 export default function Chat() {
   const route = useRoute<ChatRoute>();
   const tabBarHeight = useBottomTabBarHeight();
-  const formatNow = () =>
-    new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
-  const [messages, setMessages] = useState<Message[]>(() => {
-    const first: Message | null = route.params.initialMessage
-      ? {
-          id: "1",
-          fromSelf: false,
-          text: route.params.initialMessage,
-          time: formatNow(),
-        }
-      : {
-          id: "1",
-          fromSelf: false,
-          text: "Hi! I might have found something similar. Can you describe any unique marks?",
-          time: formatNow(),
-        };
-    return [first];
-  });
+  const viewerRole: ChatRole = route.params.viewerRole ?? "owner";
+  const [messages, setMessages] = useState<LostFoundChatMessage[]>([]);
+  const [chatId, setChatId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [errorText, setErrorText] = useState<string | null>(null);
+  const unreadRef = useRef(0);
   const [input, setInput] = useState("");
 
-  const sendMessage = () => {
-    if (!input.trim()) return;
-    const trimmed = input.trim();
-    const msg: Message = {
-      id: String(messages.length + 1),
-      fromSelf: true,
-      text: trimmed,
-      time: formatNow(),
-    };
-    setMessages((prev) => [...prev, msg]);
-    setInput("");
+  const loadChat = useCallback(async () => {
+    try {
+      const data = await getPostChat(route.params.postId, viewerRole);
+      setChatId(data.chatId);
+      setMessages(data.messages);
+      setErrorText(null);
 
-    // Basic conversational feedback until real-time backend chat is connected.
-    if (trimmed.toLowerCase().includes("thank")) return;
-    setTimeout(() => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: String(prev.length + 1),
-          fromSelf: false,
-          text: "Thanks. I will verify and reply here. Please do not share personal phone numbers.",
-          time: formatNow(),
-        },
-      ]);
-    }, 900);
+      if (viewerRole === "owner" && data.unreadCount > unreadRef.current) {
+        await scheduleOwnerNotification(route.params.postTitle ?? "your item");
+      }
+      unreadRef.current = data.unreadCount;
+
+      await markChatNotificationsRead(data.chatId, viewerRole);
+    } catch (e) {
+      setErrorText((e as Error).message || "Could not load chat");
+    } finally {
+      setLoading(false);
+    }
+  }, [route.params.postId, route.params.postTitle, viewerRole]);
+
+  useEffect(() => {
+    loadChat();
+  }, [loadChat]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      loadChat();
+    }, 4000);
+    return () => clearInterval(id);
+  }, [loadChat]);
+
+  const sendMessage = async () => {
+    if (!input.trim() || !chatId) return;
+    try {
+      setSending(true);
+      const sent = await sendPostChatMessage(chatId, viewerRole, input.trim());
+      setMessages((prev) => [...prev, sent]);
+      setInput("");
+    } catch (e) {
+      setErrorText((e as Error).message || "Could not send message");
+    } finally {
+      setSending(false);
+    }
   };
+
+  const formatTime = useCallback((iso: string) => {
+    return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }, []);
+
+  const chatSubtitle = useMemo(() => {
+    const roleLabel = viewerRole === "finder" ? "Finder view" : "Owner view";
+    return `Post #${route.params.postId} · ${roleLabel}`;
+  }, [route.params.postId, viewerRole]);
+
+  const extractImageUrls = useCallback((body: string) => {
+    const matches = body.match(/(?:https?:\/\/|file:\/\/|content:\/\/)\S+/g) ?? [];
+    return matches.filter((url) => /\.(png|jpe?g|gif|webp)$/i.test(url) || url.includes("/uploads/") || url.startsWith("file://") || url.startsWith("content://"));
+  }, []);
 
   return (
     <View style={styles.container}>
@@ -80,38 +102,47 @@ export default function Chat() {
         </View>
         <View style={styles.chatHeaderTextWrap}>
           <Text style={styles.chatHeaderTitle}>Secure Lost &amp; Found Chat</Text>
-          <Text style={styles.chatHeaderSubtitle}>Post #{route.params.postId}</Text>
+          <Text style={styles.chatHeaderSubtitle}>{chatSubtitle}</Text>
         </View>
       </View>
+      {loading && <Text style={styles.loadingText}>Loading messages...</Text>}
 
+      {errorText ? <Text style={styles.loadingText}>Chat offline mode: {errorText}</Text> : null}
       <FlatList
         style={styles.list}
         data={messages}
         keyExtractor={(m) => m.id}
         contentContainerStyle={{ paddingBottom: 12 }}
         renderItem={({ item }) => (
-          <View style={item.fromSelf ? styles.rowSelf : styles.rowOther}>
+          <View style={item.senderRole === viewerRole ? styles.rowSelf : styles.rowOther}>
             <View
               style={[
                 styles.messageBubble,
-                item.fromSelf ? styles.messageSelf : styles.messageOther,
+                item.senderRole === viewerRole ? styles.messageSelf : styles.messageOther,
               ]}
             >
               <Text
                 style={[
                   styles.messageText,
-                  item.fromSelf && styles.messageTextSelf,
+                  item.senderRole === viewerRole && styles.messageTextSelf,
                 ]}
               >
-                {item.text}
+                {item.body}
               </Text>
+              {extractImageUrls(item.body).length > 0 ? (
+                <View style={styles.imagePreviewRow}>
+                  {extractImageUrls(item.body).map((uri) => (
+                    <Image key={uri} source={{ uri }} style={styles.imagePreview} />
+                  ))}
+                </View>
+              ) : null}
               <Text
                 style={[
                   styles.messageTime,
-                  item.fromSelf && styles.messageTimeSelf,
+                  item.senderRole === viewerRole && styles.messageTimeSelf,
                 ]}
               >
-                {item.time}
+                {formatTime(item.createdAt)}
               </Text>
             </View>
           </View>
@@ -125,8 +156,8 @@ export default function Chat() {
           value={input}
           onChangeText={setInput}
         />
-        <TouchableOpacity style={styles.sendButton} onPress={sendMessage}>
-          <Text style={styles.sendButtonText}>Send</Text>
+        <TouchableOpacity style={styles.sendButton} onPress={sendMessage} disabled={sending}>
+          <Text style={styles.sendButtonText}>{sending ? "Sending..." : "Send"}</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -169,6 +200,12 @@ const styles = StyleSheet.create({
   chatHeaderSubtitle: {
     marginTop: 2,
     color: "#D0D5DD",
+    fontSize: 12,
+  },
+  loadingText: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    color: "#667085",
     fontSize: 12,
   },
   list: {
@@ -238,6 +275,18 @@ const styles = StyleSheet.create({
   sendButtonText: {
     color: "white",
     fontWeight: "700",
+  },
+  imagePreviewRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 8,
+  },
+  imagePreview: {
+    width: 90,
+    height: 90,
+    borderRadius: 8,
+    backgroundColor: "#e5e7eb",
   },
 });
 
