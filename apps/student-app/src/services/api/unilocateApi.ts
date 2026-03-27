@@ -1,3 +1,5 @@
+/** @format */
+
 import { API_BASE_URL } from "./baseUrl";
 
 export type Zone = {
@@ -8,6 +10,23 @@ export type Zone = {
     type: "Polygon" | "MultiPolygon";
     coordinates: any;
   };
+};
+
+export type OccupancyZone = {
+  id: string;
+  name: string;
+  type: string;
+  polygon_geojson: {
+    type: "Polygon" | "MultiPolygon";
+    coordinates: any;
+  };
+  display_name: string;
+  capacity: number;
+  description: string;
+  current_count: number;
+  status: string;
+  area_group: string;
+  capacity_mode: string;
 };
 
 export type LocationEventPayload = {
@@ -40,6 +59,14 @@ export async function fetchZones(): Promise<Zone[]> {
   const res = await fetch(`${API_BASE_URL}/zones`);
   if (!res.ok) {
     throw new Error("Failed to fetch zones");
+  }
+  return res.json();
+}
+
+export async function fetchOccupancyZones(): Promise<OccupancyZone[]> {
+  const res = await fetch(`${API_BASE_URL}/zones/occupancy`);
+  if (!res.ok) {
+    throw new Error("Failed to fetch occupancy zones");
   }
   return res.json();
 }

@@ -50,7 +50,7 @@ type Props = {
 };
 
 const MIN_SCALE = 1.0;
-const MAX_SCALE = 18;
+const MAX_SCALE = 48;
 const DOUBLE_TAP_MS = 280;
 const DEFAULT_USER_FOCUS_SCALE = 4.4;
 
@@ -129,7 +129,6 @@ export default function CampusMap2D({
   gpsAccuracyText = "--",
   isPinging = false,
   lastPingAt = null,
-  
 }: Props) {
   const [layout, setLayout] = useState({ width: 0, height: 0 });
   const [scale, setScale] = useState(DEFAULT_USER_FOCUS_SCALE);
@@ -138,6 +137,8 @@ export default function CampusMap2D({
   const initializedRef = useRef(false);
 
   const initialUserFocusDoneRef = useRef(false);
+
+  const viewLockedRef = useRef(false);
 
   const gestureRef = useRef({
     mode: "none" as "none" | "pan" | "pinch",
@@ -151,6 +152,8 @@ export default function CampusMap2D({
     zoneId: null,
     ts: 0,
   });
+
+  const lastAutoZoomedZoneIdRef = useRef<string | null>(null);
 
   const safeZones = useMemo(
     () =>
@@ -253,19 +256,69 @@ export default function CampusMap2D({
     const targetY = layout.height / 2 - projectedUser.y * nextScale;
 
     gestureRef.current.mode = "none";
+    viewLockedRef.current = true;
+    initializedRef.current = true;
+    initialUserFocusDoneRef.current = true;
+
     setScale(nextScale);
     setTranslate({ x: targetX, y: targetY });
   };
 
-  const zoomToZone = (zoneId: string, targetScale = 4.2) => {
+  const zoomToZone = (zoneId: string, preferredScale?: number) => {
     const selected = projectedZones.find((z) => z.id === zoneId);
     if (!selected || layout.width === 0 || layout.height === 0) return;
 
-    const nextScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, targetScale));
-    const targetX = layout.width / 2 - selected.center.x * nextScale;
-    const targetY = layout.height / 2 - selected.center.y * nextScale;
+    const xs = selected.projected.map((p) => p.x);
+    const ys = selected.projected.map((p) => p.y);
+
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+
+    const zoneWidth = Math.max(maxX - minX, 1);
+    const zoneHeight = Math.max(maxY - minY, 1);
+
+    // Leave room for top overlay and bottom sheet
+    // const horizontalPadding = 48;
+    // const topPadding = 150;
+    // const bottomPadding = 240;
+
+    const horizontalPadding = 0;
+    const topPadding = 70;
+    const bottomPadding = 150;
+
+    const availableWidth = Math.max(layout.width - horizontalPadding * 2, 80);
+    const availableHeight = Math.max(
+      layout.height - topPadding - bottomPadding,
+      80,
+    );
+
+    const fitScaleX = availableWidth / zoneWidth;
+    const fitScaleY = availableHeight / zoneHeight;
+
+    // Stronger, more focused zoom for selected building
+    const autoScale = Math.min(fitScaleX, fitScaleY) * 2.8;
+
+    const nextScale = Math.min(
+      MAX_SCALE,
+      Math.max(MIN_SCALE, preferredScale ?? autoScale, 18),
+    );
+
+    const zoneCenterX = (minX + maxX) / 2;
+    const zoneCenterY = (minY + maxY) / 2;
+
+    // Shift upward a bit so popup doesn't cover the building
+    const screenCenterX = layout.width / 2;
+    const screenCenterY = layout.height / 2 - 70;
+
+    const targetX = screenCenterX - zoneCenterX * nextScale;
+    const targetY = screenCenterY - zoneCenterY * nextScale;
 
     gestureRef.current.mode = "none";
+    viewLockedRef.current = true;
+    initializedRef.current = true;
+    initialUserFocusDoneRef.current = true;
     setScale(nextScale);
     setTranslate({ x: targetX, y: targetY });
   };
@@ -281,12 +334,13 @@ export default function CampusMap2D({
     const nextTranslateX = screenX - worldX * nextScale;
     const nextTranslateY = screenY - worldY * nextScale;
 
+    viewLockedRef.current = true;
     setScale(nextScale);
     setTranslate({ x: nextTranslateX, y: nextTranslateY });
   };
 
   const zoomInAction = () => {
-    const nextScale = Math.min(MAX_SCALE, scale + 0.5);
+    const nextScale = Math.min(MAX_SCALE, scale + 1.4);
 
     if (selectedZoneId) {
       const selected = projectedZones.find((z) => z.id === selectedZoneId);
@@ -307,7 +361,7 @@ export default function CampusMap2D({
   };
 
   const zoomOutAction = () => {
-    const nextScale = Math.max(MIN_SCALE, scale - 0.5);
+    const nextScale = Math.max(MIN_SCALE, scale - 1.2);
 
     if (selectedZoneId) {
       const selected = projectedZones.find((z) => z.id === selectedZoneId);
@@ -330,6 +384,8 @@ export default function CampusMap2D({
   const handleLocateMe = () => {
     initializedRef.current = false;
     initialUserFocusDoneRef.current = false;
+    viewLockedRef.current = false;
+    lastAutoZoomedZoneIdRef.current = null;
     onLocateMePress?.();
 
     setTimeout(() => {
@@ -343,8 +399,12 @@ export default function CampusMap2D({
     if (layout.width === 0 || layout.height === 0) return;
     if (projectedZones.length === 0) return;
 
-    // If user location becomes available anytime before first focus is done,
-    // always prioritize focusing on the user.
+    // Never auto-fit / auto-focus if a zone is currently selected
+    if (selectedZoneId) return;
+
+    // Never auto-fit again after the user has already locked the view
+    if (viewLockedRef.current) return;
+
     if (projectedUser && !initialUserFocusDoneRef.current) {
       zoomToUser(DEFAULT_USER_FOCUS_SCALE);
       initialUserFocusDoneRef.current = true;
@@ -352,18 +412,52 @@ export default function CampusMap2D({
       return;
     }
 
-    // Only fallback to fit if nothing has initialized yet.
     if (initializedRef.current) return;
 
     const timer = setTimeout(() => {
-      if (!initialUserFocusDoneRef.current && !initializedRef.current) {
+      if (
+        !selectedZoneId &&
+        !viewLockedRef.current &&
+        !initialUserFocusDoneRef.current &&
+        !initializedRef.current
+      ) {
         fitToScreen();
         initializedRef.current = true;
       }
     }, 2200);
 
     return () => clearTimeout(timer);
-  }, [layout.width, layout.height, projectedUser, projectedZones.length]);
+  }, [
+    layout.width,
+    layout.height,
+    projectedUser,
+    projectedZones.length,
+    selectedZoneId,
+  ]);
+
+  useEffect(() => {
+    if (!selectedZoneId) {
+      lastAutoZoomedZoneIdRef.current = null;
+      return;
+    }
+
+    if (layout.width === 0 || layout.height === 0) return;
+    if (projectedZones.length === 0) return;
+
+    // Only auto-zoom when the selected building changes.
+    if (lastAutoZoomedZoneIdRef.current === selectedZoneId) return;
+
+    initializedRef.current = true;
+    initialUserFocusDoneRef.current = true;
+    viewLockedRef.current = true;
+    lastAutoZoomedZoneIdRef.current = selectedZoneId;
+
+    const timer = setTimeout(() => {
+      zoomToZone(selectedZoneId, 42);
+    }, 60);
+
+    return () => clearTimeout(timer);
+  }, [selectedZoneId, layout.width, layout.height]);
 
   const onLayout = (e: LayoutChangeEvent) => {
     const { width, height } = e.nativeEvent.layout;
@@ -402,6 +496,8 @@ export default function CampusMap2D({
       gestureRef.current.lastTouchX = t.pageX;
       gestureRef.current.lastTouchY = t.pageY;
 
+      viewLockedRef.current = true;
+
       setTranslate((prev) => ({
         x: prev.x + dx,
         y: prev.y + dy,
@@ -429,6 +525,7 @@ export default function CampusMap2D({
       const nextTranslateX = centerX - worldX * nextScale;
       const nextTranslateY = centerY - worldY * nextScale;
 
+      viewLockedRef.current = true;
       setScale(nextScale);
       setTranslate({ x: nextTranslateX, y: nextTranslateY });
     }
@@ -488,7 +585,7 @@ export default function CampusMap2D({
 
     // Otherwise select this zone
     onZonePress?.(zone);
-    zoomToZone(zone.id, 4.2);
+    zoomToZone(zone.id, 46);
   };
 
   return (

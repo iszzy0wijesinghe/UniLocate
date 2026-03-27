@@ -1,3 +1,5 @@
+/** @format */
+
 import express, { type Request, type Response } from "express";
 import cors from "cors";
 import "dotenv/config";
@@ -10,6 +12,17 @@ const app = express();
 // IMPORTANT: increase JSON limit for polygons
 app.use(express.json({ limit: "10mb" }));
 app.use(cors());
+
+function getOccupancyStatus(currentCount: number, capacity: number) {
+  if (!capacity || capacity <= 0) return "Unknown";
+
+  const ratio = currentCount / capacity;
+
+  if (ratio >= 0.8) return "Crowded";
+  if (ratio >= 0.4) return "Almost Full";
+  if (ratio > 0) return "Available";
+  return "Free";
+}
 
 app.get("/health", async (_req: Request, res: Response) => {
   try {
@@ -58,7 +71,7 @@ const lostFoundPosts: LostFoundPost[] = [];
 
 app.get("/lost-found/posts", (_req: Request, res: Response) => {
   const sorted = [...lostFoundPosts].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
   res.json(sorted);
 });
@@ -97,7 +110,8 @@ app.post("/lost-found/posts/:id/resolve", (req: Request, res: Response) => {
 
 app.delete("/lost-found/posts/:id", (req: Request, res: Response) => {
   const idx = lostFoundPosts.findIndex((p) => p.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ ok: false, message: "Not found" });
+  if (idx === -1)
+    return res.status(404).json({ ok: false, message: "Not found" });
 
   lostFoundPosts.splice(idx, 1);
   res.status(204).send();
@@ -107,12 +121,14 @@ app.delete("/lost-found/posts/:id", (req: Request, res: Response) => {
 app.get("/zones", async (_req: Request, res: Response) => {
   try {
     const { rows } = await pool.query(
-      "SELECT id, name, type, polygon_geojson FROM zones ORDER BY name ASC"
+      "SELECT id, name, type, polygon_geojson FROM zones ORDER BY name ASC",
     );
     res.json(rows);
   } catch (e) {
     console.error("DB error in GET /zones:", e);
-    res.status(503).json({ error: "Database unavailable. Check DATABASE_URL in apps/api/.env" });
+    res.status(503).json({
+      error: "Database unavailable. Check DATABASE_URL in apps/api/.env",
+    });
   }
 });
 
@@ -124,7 +140,7 @@ app.get("/boundary", async (_req: Request, res: Response) => {
       FROM boundaries
       ORDER BY id ASC
       LIMIT 1
-      `
+      `,
     );
 
     if (rows.length === 0) {
@@ -134,7 +150,9 @@ app.get("/boundary", async (_req: Request, res: Response) => {
     res.json(rows[0]);
   } catch (e) {
     console.error("DB error in GET /boundary:", e);
-    res.status(503).json({ error: "Database unavailable. Check DATABASE_URL in apps/api/.env" });
+    res.status(503).json({
+      error: "Database unavailable. Check DATABASE_URL in apps/api/.env",
+    });
   }
 });
 
@@ -158,12 +176,21 @@ app.post("/events/location", async (req: Request, res: Response) => {
     await pool.query(
       `INSERT INTO location_events (user_id, lat, lng, accuracy_m, matched_zone_id, event_type)
        VALUES ($1,$2,$3,$4,$5,$6)`,
-      [e.userId, e.lat, e.lng, e.accuracyM ?? null, e.matchedZoneId ?? null, e.eventType]
+      [
+        e.userId,
+        e.lat,
+        e.lng,
+        e.accuracyM ?? null,
+        e.matchedZoneId ?? null,
+        e.eventType,
+      ],
     );
     res.json({ ok: true });
   } catch (err) {
     console.error("DB error in POST /events/location:", err);
-    res.status(503).json({ error: "Database unavailable. Check DATABASE_URL in apps/api/.env" });
+    res.status(503).json({
+      error: "Database unavailable. Check DATABASE_URL in apps/api/.env",
+    });
   }
 });
 
@@ -178,12 +205,64 @@ app.get("/zones/live", async (_req: Request, res: Response) => {
         AND event_type = 'PING'
         AND created_at > NOW() - INTERVAL '60 seconds'
       GROUP BY matched_zone_id
-      `
+      `,
     );
     res.json(rows);
   } catch (e) {
     console.error("DB error in GET /zones/live:", e);
-    res.status(503).json({ error: "Database unavailable. Check DATABASE_URL in apps/api/.env" });
+    res.status(503).json({
+      error: "Database unavailable. Check DATABASE_URL in apps/api/.env",
+    });
+  }
+});
+
+app.get("/zones/occupancy", async (_req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT
+        z.id,
+        z.name,
+        z.type,
+        z.polygon_geojson,
+        COALESCE(d.display_name, z.name) AS display_name,
+COALESCE(d.capacity, 0) AS capacity,
+COALESCE(d.description, '') AS description,
+COALESCE(d.area_group, 'common_space') AS area_group,
+COALESCE(d.capacity_mode, 'open') AS capacity_mode,
+COALESCE(l.pings_last_60s, 0) AS current_count
+      FROM zones z
+      LEFT JOIN zone_details d
+        ON d.zone_id = z.id
+      LEFT JOIN (
+        SELECT
+          matched_zone_id,
+          COUNT(*)::int AS pings_last_60s
+        FROM location_events
+        WHERE matched_zone_id IS NOT NULL
+          AND event_type = 'PING'
+          AND created_at > NOW() - INTERVAL '60 seconds'
+        GROUP BY matched_zone_id
+      ) l
+        ON l.matched_zone_id = z.id
+      ORDER BY z.name ASC
+      `,
+    );
+
+    const result = rows.map((row) => ({
+      ...row,
+      status: getOccupancyStatus(
+        Number(row.current_count ?? 0),
+        Number(row.capacity ?? 0),
+      ),
+    }));
+
+    res.json(result);
+  } catch (e) {
+    console.error("DB error in GET /zones/occupancy:", e);
+    res.status(503).json({
+      error: "Database unavailable. Check DATABASE_URL in apps/api/.env",
+    });
   }
 });
 
@@ -209,9 +288,10 @@ app.post("/admin/zones/import", async (req: Request, res: Response) => {
     const zonesRaw = Array.isArray(body) ? body : body?.zones;
 
     if (!Array.isArray(zonesRaw)) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Expected JSON array or { zones: [...] }" });
+      return res.status(400).json({
+        ok: false,
+        message: "Expected JSON array or { zones: [...] }",
+      });
     }
 
     const parsed = zonesRaw.map((z) => ZoneSchema.parse(z));
@@ -221,7 +301,10 @@ app.post("/admin/zones/import", async (req: Request, res: Response) => {
       client = await pool.connect();
     } catch (dbErr) {
       console.error("DB error in POST /admin/zones/import:", dbErr);
-      return res.status(503).json({ ok: false, message: "Database unavailable. Check DATABASE_URL in apps/api/.env" });
+      return res.status(503).json({
+        ok: false,
+        message: "Database unavailable. Check DATABASE_URL in apps/api/.env",
+      });
     }
 
     try {
@@ -230,8 +313,14 @@ app.post("/admin/zones/import", async (req: Request, res: Response) => {
       for (const z of parsed) {
         const polygon = normalizeGeoJson(z.polygon_geojson);
 
-        if (!polygon || polygon.type !== "Polygon" || !Array.isArray(polygon.coordinates)) {
-          throw new Error(`Zone ${z.id} invalid polygon_geojson (must be GeoJSON Polygon)`);
+        if (
+          !polygon ||
+          polygon.type !== "Polygon" ||
+          !Array.isArray(polygon.coordinates)
+        ) {
+          throw new Error(
+            `Zone ${z.id} invalid polygon_geojson (must be GeoJSON Polygon)`,
+          );
         }
 
         await client.query(
@@ -244,7 +333,7 @@ app.post("/admin/zones/import", async (req: Request, res: Response) => {
             type = EXCLUDED.type,
             polygon_geojson = EXCLUDED.polygon_geojson
           `,
-          [z.id, z.name, z.type, JSON.stringify(polygon)]
+          [z.id, z.name, z.type, JSON.stringify(polygon)],
         );
       }
 
@@ -258,8 +347,14 @@ app.post("/admin/zones/import", async (req: Request, res: Response) => {
 
     res.json({ ok: true, imported: parsed.length });
   } catch (e: any) {
-    if (e?.code === "28P01" || e?.message?.includes("password authentication")) {
-      return res.status(503).json({ ok: false, message: "Database unavailable. Check DATABASE_URL in apps/api/.env" });
+    if (
+      e?.code === "28P01" ||
+      e?.message?.includes("password authentication")
+    ) {
+      return res.status(503).json({
+        ok: false,
+        message: "Database unavailable. Check DATABASE_URL in apps/api/.env",
+      });
     }
     res.status(400).json({ ok: false, message: e?.message ?? "Import failed" });
   }
@@ -290,7 +385,7 @@ const createComplaintSchema = z.object({
         originalName: z.string(),
         mimeType: z.string(),
         sizeBytes: z.number(),
-      })
+      }),
     )
     .default([]),
 });
@@ -309,7 +404,7 @@ const sendComplaintMessageSchema = z.object({
         originalName: z.string(),
         mimeType: z.string(),
         sizeBytes: z.number(),
-      })
+      }),
     )
     .optional()
     .default([]),
@@ -331,16 +426,22 @@ function classifyComplaintSeverity(text: string) {
   const normalized = text.toLowerCase();
 
   if (
-    ["self-harm", "suicide", "kill", "weapon", "knife", "violence threat", "immediate danger"].some(
-      (keyword) => normalized.includes(keyword)
-    )
+    [
+      "self-harm",
+      "suicide",
+      "kill",
+      "weapon",
+      "knife",
+      "violence threat",
+      "immediate danger",
+    ].some((keyword) => normalized.includes(keyword))
   ) {
     return "CRITICAL";
   }
 
   if (
-    ["threat", "violent", "ragging", "harass", "abuse", "unsafe"].some((keyword) =>
-      normalized.includes(keyword)
+    ["threat", "violent", "ragging", "harass", "abuse", "unsafe"].some(
+      (keyword) => normalized.includes(keyword),
     )
   ) {
     return "HIGH";
@@ -379,7 +480,7 @@ async function getComplaintSession(req: Request) {
     WHERE session_token = $1
     LIMIT 1
     `,
-    [sessionToken]
+    [sessionToken],
   );
 
   if (rows.length === 0) {
@@ -415,7 +516,7 @@ async function buildComplaintResponse(complaintId: string) {
     WHERE id = $1
     LIMIT 1
     `,
-    [complaintId]
+    [complaintId],
   );
 
   if (complaintResult.rows.length === 0) {
@@ -437,7 +538,7 @@ async function buildComplaintResponse(complaintId: string) {
     WHERE complaint_id = $1
     ORDER BY created_at ASC
     `,
-    [complaintId]
+    [complaintId],
   );
 
   const messages = messagesResult.rows.map((message) => ({
@@ -484,12 +585,16 @@ app.post("/api/public/cases", async (req: Request, res: Response) => {
     const anonId = generateAnonId();
     const secret = generateSecret();
     const secretHash = hashSecret(secret);
-    const severity = classifyComplaintSeverity(`${parsed.title} ${parsed.description}`);
+    const severity = classifyComplaintSeverity(
+      `${parsed.title} ${parsed.description}`,
+    );
     const status = "NEW";
     const now = new Date().toISOString();
 
     const sessionToken = crypto.randomBytes(24).toString("hex");
-    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString();
+    const expiresAt = new Date(
+      Date.now() + 1000 * 60 * 60 * 24 * 30,
+    ).toISOString();
 
     await pool.query(
       `
@@ -530,7 +635,7 @@ app.post("/api/public/cases", async (req: Request, res: Response) => {
         parsed.consent,
         now,
         now,
-      ]
+      ],
     );
 
     await pool.query(
@@ -538,7 +643,7 @@ app.post("/api/public/cases", async (req: Request, res: Response) => {
       INSERT INTO complaint_sessions (session_token, complaint_id, expires_at)
       VALUES ($1, $2, $3)
       `,
-      [sessionToken, id, expiresAt]
+      [sessionToken, id, expiresAt],
     );
 
     const complaint = await buildComplaintResponse(id);
@@ -554,7 +659,8 @@ app.post("/api/public/cases", async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Create complaint failed:", error);
     return res.status(400).json({
-      message: error instanceof Error ? error.message : "Could not create complaint",
+      message:
+        error instanceof Error ? error.message : "Could not create complaint",
     });
   }
 });
@@ -571,23 +677,27 @@ app.post("/api/public/cases/reconnect", async (req: Request, res: Response) => {
       WHERE anon_id = $1 AND secret_hash = $2
       LIMIT 1
       `,
-      [parsed.anonId, secretHash]
+      [parsed.anonId, secretHash],
     );
 
     if (rows.length === 0) {
-      return res.status(401).json({ message: "Invalid Anonymous ID or secret" });
+      return res
+        .status(401)
+        .json({ message: "Invalid Anonymous ID or secret" });
     }
 
     const complaintId = rows[0].id;
     const sessionToken = crypto.randomBytes(24).toString("hex");
-    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString();
+    const expiresAt = new Date(
+      Date.now() + 1000 * 60 * 60 * 24 * 30,
+    ).toISOString();
 
     await pool.query(
       `
       INSERT INTO complaint_sessions (session_token, complaint_id, expires_at)
       VALUES ($1, $2, $3)
       `,
-      [sessionToken, complaintId, expiresAt]
+      [sessionToken, complaintId, expiresAt],
     );
 
     const complaint = await buildComplaintResponse(complaintId);
@@ -600,7 +710,10 @@ app.post("/api/public/cases/reconnect", async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Reconnect complaint failed:", error);
     return res.status(400).json({
-      message: error instanceof Error ? error.message : "Could not reconnect complaint",
+      message:
+        error instanceof Error
+          ? error.message
+          : "Could not reconnect complaint",
     });
   }
 });
@@ -612,17 +725,20 @@ app.get("/api/public/cases/me", async (req: Request, res: Response) => {
     return res.json(complaint);
   } catch (error) {
     return res.status(401).json({
-      message: error instanceof Error ? error.message : "Could not load complaint",
+      message:
+        error instanceof Error ? error.message : "Could not load complaint",
     });
   }
 });
 
-app.get("/api/public/cases/me/messages", async (req: Request, res: Response) => {
-  try {
-    const session = await getComplaintSession(req);
+app.get(
+  "/api/public/cases/me/messages",
+  async (req: Request, res: Response) => {
+    try {
+      const session = await getComplaintSession(req);
 
-    const { rows } = await pool.query(
-      `
+      const { rows } = await pool.query(
+        `
       SELECT
         id,
         sender_type,
@@ -634,33 +750,37 @@ app.get("/api/public/cases/me/messages", async (req: Request, res: Response) => 
       WHERE complaint_id = $1
       ORDER BY created_at ASC
       `,
-      [session.complaint_id]
-    );
+        [session.complaint_id],
+      );
 
-    return res.json(
-      rows.map((message) => ({
-        id: message.id,
-        senderType: message.sender_type,
-        senderLabel: message.sender_label,
-        body: message.body,
-        requestCounseling: message.request_counseling,
-        createdAt: message.created_at,
-      }))
-    );
-  } catch (error) {
-    return res.status(401).json({
-      message: error instanceof Error ? error.message : "Could not load messages",
-    });
-  }
-});
+      return res.json(
+        rows.map((message) => ({
+          id: message.id,
+          senderType: message.sender_type,
+          senderLabel: message.sender_label,
+          body: message.body,
+          requestCounseling: message.request_counseling,
+          createdAt: message.created_at,
+        })),
+      );
+    } catch (error) {
+      return res.status(401).json({
+        message:
+          error instanceof Error ? error.message : "Could not load messages",
+      });
+    }
+  },
+);
 
-app.post("/api/public/cases/me/messages", async (req: Request, res: Response) => {
-  try {
-    const session = await getComplaintSession(req);
-    const parsed = sendComplaintMessageSchema.parse(req.body);
+app.post(
+  "/api/public/cases/me/messages",
+  async (req: Request, res: Response) => {
+    try {
+      const session = await getComplaintSession(req);
+      const parsed = sendComplaintMessageSchema.parse(req.body);
 
-    await pool.query(
-      `
+      await pool.query(
+        `
       INSERT INTO complaint_messages (
         id,
         complaint_id,
@@ -672,18 +792,18 @@ app.post("/api/public/cases/me/messages", async (req: Request, res: Response) =>
       )
       VALUES ($1, $2, $3, $4, $5, $6, NOW())
       `,
-      [
-        crypto.randomUUID(),
-        session.complaint_id,
-        "STUDENT",
-        "You",
-        parsed.body,
-        parsed.requestCounseling,
-      ]
-    );
+        [
+          crypto.randomUUID(),
+          session.complaint_id,
+          "STUDENT",
+          "You",
+          parsed.body,
+          parsed.requestCounseling,
+        ],
+      );
 
-    await pool.query(
-      `
+      await pool.query(
+        `
       UPDATE complaint_cases
       SET
         status = CASE
@@ -693,27 +813,31 @@ app.post("/api/public/cases/me/messages", async (req: Request, res: Response) =>
         updated_at = NOW()
       WHERE id = $1
       `,
-      [session.complaint_id, parsed.requestCounseling]
-    );
+        [session.complaint_id, parsed.requestCounseling],
+      );
 
-    const complaint = await buildComplaintResponse(session.complaint_id);
+      const complaint = await buildComplaintResponse(session.complaint_id);
 
-    return res.json({
-      complaint,
-      messages: complaint.messages,
-      challengeRequired: false,
-    });
-  } catch (error) {
-    console.error("Send complaint message failed:", error);
-    return res.status(400).json({
-      message: error instanceof Error ? error.message : "Could not send message",
-    });
-  }
-});
+      return res.json({
+        complaint,
+        messages: complaint.messages,
+        challengeRequired: false,
+      });
+    } catch (error) {
+      console.error("Send complaint message failed:", error);
+      return res.status(400).json({
+        message:
+          error instanceof Error ? error.message : "Could not send message",
+      });
+    }
+  },
+);
 
 const port = Number(process.env.PORT || 4000);
 const host = "0.0.0.0";
 
 app.listen(port, host, () => {
-  console.log(`API running on http://localhost:${port} (also http://0.0.0.0:${port})`);
+  console.log(
+    `API running on http://localhost:${port} (also http://0.0.0.0:${port})`,
+  );
 });
