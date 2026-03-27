@@ -5,8 +5,8 @@ export type Zone = {
   name: string;
   type: string;
   polygon_geojson: {
-    type: "Polygon";
-    coordinates: number[][][];
+    type: "Polygon" | "MultiPolygon";
+    coordinates: any;
   };
 };
 
@@ -18,6 +18,23 @@ export type LocationEventPayload = {
   matchedZoneId?: string | null;
   eventType: "PING" | "ENTER" | "EXIT";
 };
+
+export type Boundary = {
+  id: string;
+  name: string;
+  polygon_geojson: {
+    type: "Polygon" | "MultiPolygon";
+    coordinates: any;
+  };
+};
+
+export async function fetchBoundary(): Promise<Boundary> {
+  const res = await fetch(`${API_BASE_URL}/boundary`);
+  if (!res.ok) {
+    throw new Error("Failed to fetch campus boundary");
+  }
+  return res.json();
+}
 
 export async function fetchZones(): Promise<Zone[]> {
   const res = await fetch(`${API_BASE_URL}/zones`);
