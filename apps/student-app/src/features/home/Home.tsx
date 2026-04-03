@@ -27,6 +27,7 @@ import {
   type Zone,
 } from "../../services/api/unilocateApi";
 import { useUserProfileStore } from "../../store/useUserProfileStore";
+import { useLocationLogger } from "../location-logs/useLocationLogger";
 
 const { width, height } = Dimensions.get("window");
 
@@ -251,8 +252,11 @@ export default function Home() {
   // const [zones, setZones] = useState<CampusZone[]>([]);
   // const [boundary, setBoundary] = useState<CampusBoundary | null>(null);
   const [zones, setZones] = useState<CampusZone[]>([]);
+
   const [occupancyZones, setOccupancyZones] = useState<OccupancyZone[]>([]);
   const [boundary, setBoundary] = useState<CampusBoundary | null>(null);
+  useLocationLogger({ boundary, zones });
+
   const [zonesStatus, setZonesStatus] = useState("Loading map...");
   const [zonesError, setZonesError] = useState("");
   const [mapRefreshKey, setMapRefreshKey] = useState(0);

@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   createComplaint,
@@ -10,19 +10,24 @@ import {
   requestCounseling,
   sendChatMessage,
   submitIdentityDisclosure,
-} from '../complaints.api';
+  uploadComplaintAttachment,
+} from "../complaints.api";
+
 import type {
+  AttachmentDraft,
   CreateComplaintInput,
   IdentityDisclosureInput,
   ReconnectComplaintInput,
   SendMessageInput,
-} from '../types/complaints';
-import { useComplaintSessionStore } from '../state/useComplaintSessionStore';
+  UploadComplaintAttachmentResponse,
+} from "../types/complaints";
+
+import { useComplaintSessionStore } from "../state/useComplaintSessionStore";
 
 export const complaintQueryKeys = {
-  sessions: ['complaints', 'sessions'] as const,
-  detail: (caseId: string) => ['complaints', 'detail', caseId] as const,
-  messages: (caseId: string) => ['complaints', 'messages', caseId] as const,
+  sessions: ["complaints", "sessions"] as const,
+  detail: (caseId: string) => ["complaints", "detail", caseId] as const,
+  messages: (caseId: string) => ["complaints", "messages", caseId] as const,
 };
 
 export function useHydrateComplaintSessions() {
@@ -37,7 +42,10 @@ export function useComplaintCases() {
   const sessions = useComplaintSessionStore((state) => state.sessions);
 
   return useQuery({
-    queryKey: [...complaintQueryKeys.sessions, sessions.map((entry) => entry.caseId).join('|')],
+    queryKey: [
+      ...complaintQueryKeys.sessions,
+      sessions.map((entry) => entry.caseId).join("|"),
+    ],
     queryFn: fetchStoredComplaints,
   });
 }
@@ -65,8 +73,14 @@ export function useCreateComplaintMutation() {
     mutationFn: (payload: CreateComplaintInput) => createComplaint(payload),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: complaintQueryKeys.sessions });
-      queryClient.setQueryData(complaintQueryKeys.detail(result.complaint.id), result.complaint);
-      queryClient.setQueryData(complaintQueryKeys.messages(result.complaint.id), result.complaint.messages);
+      queryClient.setQueryData(
+        complaintQueryKeys.detail(result.complaint.id),
+        result.complaint,
+      );
+      queryClient.setQueryData(
+        complaintQueryKeys.messages(result.complaint.id),
+        result.complaint.messages,
+      );
     },
   });
 }
@@ -78,8 +92,14 @@ export function useReconnectComplaintMutation() {
     mutationFn: (payload: ReconnectComplaintInput) => reconnectComplaint(payload),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: complaintQueryKeys.sessions });
-      queryClient.setQueryData(complaintQueryKeys.detail(result.complaint.id), result.complaint);
-      queryClient.setQueryData(complaintQueryKeys.messages(result.complaint.id), result.complaint.messages);
+      queryClient.setQueryData(
+        complaintQueryKeys.detail(result.complaint.id),
+        result.complaint,
+      );
+      queryClient.setQueryData(
+        complaintQueryKeys.messages(result.complaint.id),
+        result.complaint.messages,
+      );
     },
   });
 }
@@ -93,6 +113,17 @@ export function useSendComplaintMessageMutation(caseId: string) {
       queryClient.setQueryData(complaintQueryKeys.detail(caseId), result.complaint);
       queryClient.setQueryData(complaintQueryKeys.messages(caseId), result.messages);
       queryClient.invalidateQueries({ queryKey: complaintQueryKeys.sessions });
+    },
+  });
+}
+
+export function useUploadComplaintAttachmentMutation(caseId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation<UploadComplaintAttachmentResponse, Error, AttachmentDraft>({
+    mutationFn: (attachment) => uploadComplaintAttachment(caseId, attachment),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: complaintQueryKeys.messages(caseId) });
     },
   });
 }
@@ -114,7 +145,8 @@ export function useIdentityDisclosureMutation(caseId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (payload: IdentityDisclosureInput) => submitIdentityDisclosure(caseId, payload),
+    mutationFn: (payload: IdentityDisclosureInput) =>
+      submitIdentityDisclosure(caseId, payload),
     onSuccess: (result) => {
       queryClient.setQueryData(complaintQueryKeys.detail(caseId), result.complaint);
       queryClient.invalidateQueries({ queryKey: complaintQueryKeys.sessions });

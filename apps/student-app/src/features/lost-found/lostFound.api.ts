@@ -1,3 +1,5 @@
+/** @format */
+
 import React, { useEffect, useState } from "react";
 import { API_BASE_URL } from "../../services/api/baseUrl";
 export type LostFoundType = "lost" | "found";
@@ -14,6 +16,9 @@ export interface LostFoundPost {
   images?: string[];
   createdAt: string;
   status: "open" | "resolved";
+  ownerUserId?: string;
+  ownerUsername?: string;
+  isFound?: boolean;
 }
 
 const API_URL = API_BASE_URL;
@@ -22,7 +27,7 @@ const localPostsStore: LostFoundPost[] = [];
 
 async function fetchWithTimeout(
   url: string,
-  opts: RequestInit & { timeout?: number } = {}
+  opts: RequestInit & { timeout?: number } = {},
 ): Promise<Response> {
   const { timeout = FETCH_TIMEOUT_MS, ...fetchOpts } = opts;
   const controller = new AbortController();
@@ -34,7 +39,9 @@ async function fetchWithTimeout(
   } catch (e) {
     clearTimeout(id);
     if ((e as Error).name === "AbortError") {
-      throw new Error("Request timed out. Is the API running? Start it with: pnpm -C apps/api dev");
+      throw new Error(
+        "Request timed out. Is the API running? Start it with: pnpm -C apps/api dev",
+      );
     }
     throw e;
   }
@@ -42,14 +49,6 @@ async function fetchWithTimeout(
 
 export interface LostFoundPostSummary extends LostFoundPost {
   relativeTime: string;
-}
-
-export interface LocationTrailPoint {
-  id: string;
-  label: string;
-  // Simple mock coordinates for a 2D campus map preview
-  x: number;
-  y: number;
 }
 
 function toSummary(post: LostFoundPost): LostFoundPostSummary {
@@ -60,7 +59,10 @@ function toSummary(post: LostFoundPost): LostFoundPostSummary {
 
 function getLocalSummaries(): LostFoundPostSummary[] {
   return [...localPostsStore]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    )
     .map(toSummary);
 }
 
@@ -112,7 +114,7 @@ export function useLostFoundPosts() {
       setError(
         isNetworkFailure(e)
           ? "API unavailable. Showing local posts."
-          : "Failed to load posts"
+          : "Failed to load posts",
       );
     } finally {
       setLoading(false);
@@ -127,7 +129,7 @@ export function useLostFoundPosts() {
 }
 
 export async function createLostFoundPost(
-  input: Omit<LostFoundPost, "id" | "createdAt" | "status">
+  input: Omit<LostFoundPost, "id" | "createdAt" | "status" | "isFound">,
 ): Promise<LostFoundPost> {
   try {
     const res = await fetchWithTimeout(`${API_URL}/lost-found/posts`, {
@@ -151,6 +153,7 @@ export async function createLostFoundPost(
       id: `local-${Date.now()}`,
       createdAt: new Date().toISOString(),
       status: "open",
+      isFound: false,
       ...input,
     };
     localPostsStore.unshift(fallbackPost);
@@ -158,7 +161,9 @@ export async function createLostFoundPost(
   }
 }
 
-export async function getPostDetails(id: string): Promise<LostFoundPostSummary> {
+export async function getPostDetails(
+  id: string,
+): Promise<LostFoundPostSummary> {
   try {
     const res = await fetchWithTimeout(`${API_URL}/lost-found/posts/${id}`);
     if (!res.ok) {
@@ -175,22 +180,36 @@ export async function getPostDetails(id: string): Promise<LostFoundPostSummary> 
 
 export async function resolvePost(id: string): Promise<LostFoundPost> {
   try {
-    const res = await fetchWithTimeout(`${API_URL}/lost-found/posts/${id}/resolve`, {
-      method: "POST",
-    });
+    const res = await fetchWithTimeout(
+      `${API_URL}/lost-found/posts/${id}/resolve`,
+      {
+        method: "POST",
+      },
+    );
+
     if (!res.ok) {
       throw new Error("Failed to resolve post");
     }
+
     const resolved = (await res.json()) as LostFoundPost;
-    const idx = localPostsStore.findIndex((p) => p.id === id);
-    if (idx !== -1) localPostsStore[idx] = resolved;
+
+    const localIdx = localPostsStore.findIndex((p) => p.id === id);
+    if (localIdx !== -1) {
+      localPostsStore[localIdx] = resolved;
+    }
+
     return resolved;
   } catch (e) {
-    const idx = localPostsStore.findIndex((p) => p.id === id);
-    if (idx !== -1) {
-      localPostsStore[idx] = { ...localPostsStore[idx], status: "resolved" };
-      return localPostsStore[idx];
+    const localIdx = localPostsStore.findIndex((p) => p.id === id);
+    if (localIdx !== -1) {
+      localPostsStore[localIdx] = {
+        ...localPostsStore[localIdx],
+        status: "resolved",
+        isFound: true,
+      };
+      return localPostsStore[localIdx];
     }
+
     throw e;
   }
 }
@@ -209,12 +228,76 @@ export const deleteLostFoundPost = async (id: string): Promise<void> => {
   }
 };
 
-export function getMockLocationTrail(): LocationTrailPoint[] {
-  return [
-    { id: "1", label: "Library", x: 20, y: 30 },
-    { id: "2", label: "Main Hall", x: 55, y: 45 },
-    { id: "3", label: "Canteen", x: 75, y: 70 },
-  ];
+export function isOwnLostFoundPost(
+  post: Pick<LostFoundPost, "ownerUserId">,
+  currentUserId?: string | number | null,
+) {
+  return String(post.ownerUserId ?? "") === String(currentUserId ?? "");
+}
+
+export type LostFoundChatMessage = {
+  id: string;
+  senderType: "owner" | "finder" | "claimant" | "system";
+  senderLabel?: string;
+  message: string;
+  createdAt: string;
+};
+
+export async function getLostFoundChats(postId: string) {
+  const res = await fetchWithTimeout(
+    `${API_URL}/lost-found/posts/${postId}/chats`,
+  );
+
+  if (!res.ok) {
+    throw new Error("Failed to load chats");
+  }
+
+  return (await res.json()) as LostFoundChatMessage[];
+}
+
+export async function sendLostFoundChatMessage(
+  postId: string,
+  input: {
+    senderType: "owner" | "finder" | "claimant" | "system";
+    senderLabel?: string;
+    message: string;
+  },
+) {
+  const res = await fetchWithTimeout(
+    `${API_URL}/lost-found/posts/${postId}/chats`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+
+  if (!res.ok) {
+    const details = await getErrorDetails(res);
+    throw new Error(details || "Failed to send message");
+  }
+
+  return (await res.json()) as LostFoundChatMessage;
 }
 
 
+export type LostFoundChatThread = {
+  id: string;
+  postId: string;
+  title: string;
+  preview: string;
+  lastMessageAt?: string;
+  ownerUserId?: string;
+  ownerUsername?: string;
+};
+
+export async function getLostFoundChatThreads(userId: string) {
+  const res = await fetchWithTimeout(`${API_URL}/lost-found/chat-threads/${userId}`);
+
+  if (!res.ok) {
+    const details = await getErrorDetails(res);
+    throw new Error(details || "Failed to load chat threads");
+  }
+
+  return (await res.json()) as LostFoundChatThread[];
+}

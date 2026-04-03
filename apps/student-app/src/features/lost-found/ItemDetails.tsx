@@ -1,13 +1,29 @@
+/** @format */
+
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Image,
+  ScrollView,
+  Modal,
+} from "react-native";
 import { RouteProp, useNavigation, useRoute } from "@react-navigation/native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+import LostFoundTopBar from "./components/LostFoundTopBar";
+import { useUserProfileStore } from "../../store/useUserProfileStore";
 
 import type {
   LostFoundStackParamList,
   LostFoundStackScreenProps,
 } from "../../navigation/LostFoundStack";
-import { getPostDetails, resolvePost, type LostFoundPostSummary } from "./lostFound.api";
+import {
+  getPostDetails,
+  resolvePost,
+  type LostFoundPostSummary,
+} from "./lostFound.api";
 
 type DetailsRoute = RouteProp<LostFoundStackParamList, "ItemDetails">;
 type Navigation = LostFoundStackScreenProps<"ItemDetails">["navigation"];
@@ -17,7 +33,12 @@ export default function ItemDetails() {
   const navigation = useNavigation<Navigation>();
   const [post, setPost] = useState<LostFoundPostSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const [showResolveConfirm, setShowResolveConfirm] = useState(false);
+  const [resolving, setResolving] = useState(false);
   const tabBarHeight = useBottomTabBarHeight();
+
+  const userId = useUserProfileStore((state: any) => state.userId);
 
   useEffect(() => {
     getPostDetails(route.params.id)
@@ -44,15 +65,33 @@ export default function ItemDetails() {
     );
   }
 
+  const currentUserId = String(userId ?? "");
+  const ownerUserId = String(post.ownerUserId ?? "");
+  const isOwner = currentUserId !== "" && currentUserId === ownerUserId;
+  const isOwnPost = String(post.ownerUserId ?? "") === String(userId ?? "");
+  const canOfferHelp =
+    post.type === "lost" && post.status === "open" && !post.isFound && !isOwner;
+
   const isLost = post.type === "lost";
 
   return (
-    <ScrollView contentContainerStyle={[styles.container, { paddingBottom: tabBarHeight + 24 }]}>
+    <ScrollView
+      contentContainerStyle={[
+        styles.container,
+        { paddingBottom: tabBarHeight + 24 },
+      ]}>
+      <LostFoundTopBar
+        title="Item Details"
+        subtitle="Review item information and take the next secure action."
+        compact
+      />
+
       <View style={styles.headerCard}>
         <View style={styles.headerRow}>
           <Text style={styles.badge}>{post.type.toUpperCase()}</Text>
           <Text style={styles.category}>{post.category}</Text>
         </View>
+
         <Text style={styles.title}>{post.title}</Text>
         <Text style={styles.meta}>{post.relativeTime}</Text>
         <Text style={styles.meta}>Status: {post.status.toUpperCase()}</Text>
@@ -83,39 +122,91 @@ export default function ItemDetails() {
         <Text style={styles.sectionTitle}>If you found this item</Text>
         <Text style={styles.bodyText}>
           Use the secure in-app chat to contact the owner without sharing your
-          phone number or email. Describe where you found the item and ask
-          proof questions (colour, marks, contents) to confirm ownership.
+          phone number or email. Describe where you found the item and ask proof
+          questions to confirm ownership.
         </Text>
       </View>
 
       <View style={styles.footer}>
-        <TouchableOpacity
-          style={[styles.footerButton, styles.secondaryButton]}
-          onPress={() =>
-            navigation.navigate("FoundReport", {
-              postId: post.id,
-              postTitle: post.title,
-            })
-          }
-        >
-          <Text style={styles.secondaryButtonText}>I found this item</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.footerButton, styles.primaryButton]}
-          onPress={async () => {
-            try {
-              await resolvePost(post.id);
-              navigation.goBack();
-            } catch {
-              // Optionally show an error toast
-            }
-          }}
-        >
-          <Text style={styles.primaryButtonText}>
-            {isLost ? "I collected my item" : "Item returned to owner"}
-          </Text>
-        </TouchableOpacity>
+        {!isOwner &&
+        post.type === "lost" &&
+        post.status === "open" &&
+        !post.isFound ? (
+          <TouchableOpacity
+            style={[styles.footerButton, styles.secondaryButton]}
+            onPress={() =>
+              navigation.navigate("FoundReport", {
+                postId: post.id,
+                postTitle: post.title,
+              })
+            }>
+            <Text style={styles.secondaryButtonText}>I found this item</Text>
+          </TouchableOpacity>
+        ) : null}
+
+        {isOwner ? (
+          <TouchableOpacity
+            style={[styles.footerButton, styles.primaryButton]}
+            onPress={() => setShowResolveConfirm(true)}>
+            <Text style={styles.primaryButtonText}>
+              {isLost ? "I collected my item" : "Item returned to owner"}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
+
+      <Modal
+        visible={showResolveConfirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowResolveConfirm(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalIconWrap}>
+              <Text style={styles.modalIcon}>✓</Text>
+            </View>
+
+            <Text style={styles.modalTitle}>
+              {isLost ? "Confirm collection" : "Confirm return"}
+            </Text>
+
+            <Text style={styles.modalText}>
+              {isLost
+                ? "Are you sure you collected this item? This post will be marked as resolved and removed from active lost item listings."
+                : "Are you sure this item was returned to its owner? This post will be marked as resolved."}
+            </Text>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalCancelButton]}
+                onPress={() => setShowResolveConfirm(false)}
+                disabled={resolving}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalConfirmButton]}
+                disabled={resolving}
+                onPress={async () => {
+                  try {
+                    setResolving(true);
+                    await resolvePost(post.id);
+                    setShowResolveConfirm(false);
+                    navigation.goBack();
+                  } catch {
+                    setShowResolveConfirm(false);
+                  } finally {
+                    setResolving(false);
+                  }
+                }}>
+                <Text style={styles.modalConfirmText}>
+                  {resolving ? "Please wait..." : "Yes, confirm"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -123,7 +214,8 @@ export default function ItemDetails() {
 const styles = StyleSheet.create({
   container: {
     flexGrow: 1,
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 16,
     backgroundColor: "#F3F6FA",
   },
   headerCard: {
@@ -217,5 +309,97 @@ const styles = StyleSheet.create({
     marginRight: 8,
     backgroundColor: "#e5e7eb",
   },
-});
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(5, 54, 104, 0.28)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
 
+  modalCard: {
+    width: "100%",
+    maxWidth: 360,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 24,
+    paddingHorizontal: 20,
+    paddingTop: 22,
+    paddingBottom: 18,
+    shadowColor: "#000",
+    shadowOpacity: 0.18,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 12,
+  },
+
+  modalIconWrap: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "#ECFDF3",
+    borderWidth: 1,
+    borderColor: "#ABEFC6",
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "center",
+    marginBottom: 14,
+  },
+
+  modalIcon: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: "#039855",
+  },
+
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "800",
+    color: "#053668",
+    textAlign: "center",
+  },
+
+  modalText: {
+    marginTop: 10,
+    fontSize: 14,
+    lineHeight: 21,
+    color: "#667085",
+    textAlign: "center",
+  },
+
+  modalActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 20,
+  },
+
+  modalButton: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+  },
+
+  modalCancelButton: {
+    backgroundColor: "#FFF8F3",
+    borderWidth: 1.2,
+    borderColor: "#F5B27A",
+  },
+
+  modalCancelText: {
+    color: "#B54708",
+    fontWeight: "700",
+    fontSize: 14,
+  },
+
+  modalConfirmButton: {
+    backgroundColor: "#053668",
+  },
+
+  modalConfirmText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 14,
+  },
+});

@@ -11,12 +11,14 @@ import {
   Text,
   TextInput,
   View,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons } from "@expo/vector-icons";
 import { useUserProfileStore } from "../../store/useUserProfileStore";
 import type { FirstRunStackParamList } from "../../navigation/FirstRunNavigator";
+import { registerUser } from "../../services/api/userApi";
 
 type Props = NativeStackScreenProps<
   FirstRunStackParamList,
@@ -26,14 +28,24 @@ type Props = NativeStackScreenProps<
 export default function UsernameRegistration({ navigation }: Props) {
   const [username, setUsername] = React.useState("");
   const [acceptedPrivacy, setAcceptedPrivacy] = React.useState(false);
+  const [submitting, setSubmitting] = React.useState(false);
+  const [errorMessage, setErrorMessage] = React.useState("");
 
-  const setUsernameInStore = useUserProfileStore((state) => state.setUsername);
+  const setUsernameInStore = useUserProfileStore(
+    (state: any) => state.setUsername,
+  );
+  const setUserIdInStore = useUserProfileStore((state: any) => state.setUserId);
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     const trimmedUsername = username.trim();
 
     if (!trimmedUsername) {
       Alert.alert("Username required", "Please enter a username to continue.");
+      return;
+    }
+
+    if (trimmedUsername.length < 3) {
+      setErrorMessage("Username must be at least 3 characters.");
       return;
     }
 
@@ -45,8 +57,31 @@ export default function UsernameRegistration({ navigation }: Props) {
       return;
     }
 
-    setUsernameInStore(trimmedUsername);
-    navigation.navigate("Calibration");
+    try {
+      setSubmitting(true);
+      setErrorMessage("");
+
+      const user = await registerUser({
+        username: trimmedUsername,
+      });
+
+      setUsernameInStore(user.username);
+
+      if (typeof setUserIdInStore === "function") {
+        setUserIdInStore(user.id);
+      }
+
+      navigation.navigate("LocationPermissions");
+    } catch (error) {
+      console.log("[register-user] error =>", error);
+
+      Alert.alert(
+        "Registration failed",
+        error instanceof Error ? error.message : "Could not create username.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -72,20 +107,28 @@ export default function UsernameRegistration({ navigation }: Props) {
         <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Username</Text>
           <Text style={styles.helpText}>
-            This name is used only inside the app experience. Keep it simple and
-            easy to recognize.
+            This name is used inside the app and must be unique. Keep it simple
+            and easy to recognize.
           </Text>
 
           <TextInput
             value={username}
-            onChangeText={setUsername}
+            onChangeText={(value) => {
+              setUsername(value);
+              if (errorMessage) setErrorMessage("");
+            }}
             placeholder="Enter username"
             placeholderTextColor="#98A2B3"
             style={styles.input}
             autoCapitalize="none"
             autoCorrect={false}
             maxLength={24}
+            editable={!submitting}
           />
+
+          {errorMessage ? (
+            <Text style={styles.errorText}>{errorMessage}</Text>
+          ) : null}
 
           <View style={styles.policyCard}>
             <View style={styles.policyHeader}>
@@ -99,8 +142,8 @@ export default function UsernameRegistration({ navigation }: Props) {
 
             <Text style={styles.policyText}>
               UniLocate uses campus-only device data to support map guidance,
-              lost & found, and anonymous complaints. Personal identity details
-              are not required for core use.
+              lost &amp; found, and anonymous complaints. Personal identity
+              details are not required for core use.
             </Text>
 
             <View style={styles.toggleRow}>
@@ -112,6 +155,7 @@ export default function UsernameRegistration({ navigation }: Props) {
                 onValueChange={setAcceptedPrivacy}
                 trackColor={{ false: "#D0D5DD", true: "#FCC9AE" }}
                 thumbColor={acceptedPrivacy ? "#FF7100" : "#FFFFFF"}
+                disabled={submitting}
               />
             </View>
           </View>
@@ -120,15 +164,26 @@ export default function UsernameRegistration({ navigation }: Props) {
             <Pressable
               style={[styles.button, styles.secondaryButton]}
               onPress={() => navigation.goBack()}
-            >
+              disabled={submitting}>
               <Text style={styles.secondaryButtonText}>Back</Text>
             </Pressable>
 
             <Pressable
-              style={[styles.button, styles.primaryButton]}
+              style={[
+                styles.button,
+                styles.primaryButton,
+                submitting && styles.primaryButtonDisabled,
+              ]}
               onPress={handleContinue}
-            >
-              <Text style={styles.primaryButtonText}>Continue</Text>
+              disabled={submitting}>
+              {submitting ? (
+                <View style={styles.loadingRow}>
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                  <Text style={styles.primaryButtonText}>Please wait...</Text>
+                </View>
+              ) : (
+                <Text style={styles.primaryButtonText}>Continue</Text>
+              )}
             </Pressable>
           </View>
         </View>
@@ -210,6 +265,12 @@ const styles = StyleSheet.create({
     color: "#111827",
     fontSize: 15,
   },
+  errorText: {
+    marginTop: 8,
+    fontSize: 13,
+    color: "#B42318",
+    fontWeight: "600",
+  },
   policyCard: {
     marginTop: 18,
     borderRadius: 18,
@@ -262,6 +323,9 @@ const styles = StyleSheet.create({
   primaryButton: {
     backgroundColor: "#FF7100",
   },
+  primaryButtonDisabled: {
+    opacity: 0.7,
+  },
   secondaryButton: {
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
@@ -276,5 +340,10 @@ const styles = StyleSheet.create({
     color: "#053668",
     fontSize: 14,
     fontWeight: "700",
+  },
+  loadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
 });

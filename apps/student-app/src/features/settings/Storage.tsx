@@ -142,6 +142,8 @@ export default function Storage({ navigation }: Props) {
   );
 }
 
+
+
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,

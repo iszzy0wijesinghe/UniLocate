@@ -50,9 +50,11 @@ type Props = {
 };
 
 const MIN_SCALE = 1.0;
-const MAX_SCALE = 48;
+const MAX_SCALE = 220;
 const DOUBLE_TAP_MS = 280;
-const DEFAULT_USER_FOCUS_SCALE = 4.4;
+const DEFAULT_USER_FOCUS_SCALE = 200;
+const LOCATE_ME_SCALE = 200;
+const SELECTED_ZONE_SCALE = 60;
 
 function isValidPoint(point: unknown): point is Point {
   return (
@@ -298,11 +300,11 @@ export default function CampusMap2D({
     const fitScaleY = availableHeight / zoneHeight;
 
     // Stronger, more focused zoom for selected building
-    const autoScale = Math.min(fitScaleX, fitScaleY) * 2.8;
+    const autoScale = Math.min(fitScaleX, fitScaleY) * 6.5;
 
     const nextScale = Math.min(
       MAX_SCALE,
-      Math.max(MIN_SCALE, preferredScale ?? autoScale, 18),
+      Math.max(MIN_SCALE, preferredScale ?? autoScale, SELECTED_ZONE_SCALE),
     );
 
     const zoneCenterX = (minX + maxX) / 2;
@@ -389,10 +391,10 @@ export default function CampusMap2D({
     onLocateMePress?.();
 
     setTimeout(() => {
-      zoomToUser(4.8);
+      zoomToUser(LOCATE_ME_SCALE);
       initialUserFocusDoneRef.current = true;
       initializedRef.current = true;
-    }, 350);
+    }, 250);
   };
 
   useEffect(() => {
