@@ -20,7 +20,7 @@ import {
   getMockLocationTrail,
   type ItemCategory,
 } from "./lostFound.api";
-import { scheduleOwnerReminderNotification } from "../../notifications";
+import { scheduleFinderNotification } from "../../notifications";
 
 type ReportRoute = RouteProp<LostFoundStackParamList, "ReportItem">;
 type Navigation = LostFoundStackScreenProps<"ReportItem">["navigation"];
@@ -84,7 +84,7 @@ export default function ReportItem() {
         if (Platform.OS === "web") {
           console.warn("Reminder notifications are not supported on web");
         } else {
-          await scheduleOwnerReminderNotification(title.trim());
+          await scheduleFinderNotification(title.trim());
         }
       }
 
