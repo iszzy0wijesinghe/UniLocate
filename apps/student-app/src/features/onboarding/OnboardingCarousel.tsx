@@ -211,7 +211,7 @@ export default function OnboardingCarousel({ navigation }: Props) {
   };
 
   const handleSkip = () => {
-    navigation.navigate('UsernameRegistration');
+    navigation.navigate('AuthWelcome');
   };
 
   const handleMomentumEnd = (event: any) => {

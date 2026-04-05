@@ -44,12 +44,6 @@ export default function LostFoundHome() {
     [posts],
   );
 
-  const myPosts = useMemo(
-    () =>
-      posts.filter((p) => String(p.ownerUserId ?? "") === String(userId ?? "")),
-    [posts, userId],
-  );
-
   const renderPost = ({ item }: { item: LostFoundPostSummary }) => {
     const thumbnail =
       item.images && item.images.length > 0 ? item.images[0] : null;
@@ -63,7 +57,11 @@ export default function LostFoundHome() {
         activeOpacity={0.9}>
         <View style={styles.imageWrap}>
           {thumbnail ? (
-            <Image source={{ uri: thumbnail }} style={styles.cardImage} />
+            <Image
+              source={{ uri: thumbnail }}
+              style={styles.cardImage}
+              resizeMode="cover"
+            />
           ) : (
             <View style={styles.imagePlaceholder}>
               <Ionicons name="image-outline" size={26} color="#98A2B3" />

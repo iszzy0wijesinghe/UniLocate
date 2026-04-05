@@ -31,11 +31,13 @@ export type OccupancyZone = {
 
 export type LocationEventPayload = {
   userId: string;
+  deviceId: string;
   lat: number;
   lng: number;
   accuracyM?: number;
   matchedZoneId?: string | null;
   eventType: "PING" | "ENTER" | "EXIT";
+  appState?: "foreground" | "background";
 };
 
 export type Boundary = {
@@ -55,6 +57,23 @@ export async function fetchBoundary(): Promise<Boundary> {
   return res.json();
 }
 
+export async function sendLocationEvent(payload: LocationEventPayload) {
+  const res = await fetch(`${API_BASE_URL}/events/location`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Failed to send location event");
+  }
+
+  return res.json();
+}
+
 export async function fetchZones(): Promise<Zone[]> {
   const res = await fetch(`${API_BASE_URL}/zones`);
   if (!res.ok) {
@@ -71,22 +90,7 @@ export async function fetchOccupancyZones(): Promise<OccupancyZone[]> {
   return res.json();
 }
 
-export async function sendLocationEvent(payload: LocationEventPayload) {
-  const res = await fetch(`${API_BASE_URL}/events/location`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Failed to send location event: ${text}`);
-  }
-
-  return res.json();
-}
 
 export async function fetchLiveZoneCounts() {
   const res = await fetch(`${API_BASE_URL}/zones/live`);

@@ -17,23 +17,37 @@ import fs from "fs";
 
 const app = express();
 
-const uploadsDir = path.join(process.cwd(), "uploads", "complaints");
-fs.mkdirSync(uploadsDir, { recursive: true });
+const complaintUploadsDir = path.join(process.cwd(), "uploads", "complaints");
+fs.mkdirSync(complaintUploadsDir, { recursive: true });
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadsDir),
+const complaintStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, complaintUploadsDir),
   filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname);
     cb(null, `${crypto.randomUUID()}${ext}`);
   },
 });
 
-const upload = multer({ storage });
+const upload = multer({ storage: complaintStorage });
+
+const lostFoundUploadsDir = path.join(process.cwd(), "uploads", "lost-found");
+fs.mkdirSync(lostFoundUploadsDir, { recursive: true });
+
+const lostFoundStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, lostFoundUploadsDir),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `${crypto.randomUUID()}${ext}`);
+  },
+});
+
+const lostFoundUpload = multer({ storage: lostFoundStorage });
 
 // IMPORTANT: increase JSON limit for polygons
 app.use(express.json({ limit: "10mb" }));
 app.use(cors());
-app.use("/uploads/complaints", express.static(uploadsDir));
+app.use("/uploads/complaints", express.static(complaintUploadsDir));
+app.use("/uploads/lost-found", express.static(lostFoundUploadsDir));
 
 function getOccupancyStatus(currentCount: number, capacity: number) {
   if (!capacity || capacity <= 0) return "Unknown";
@@ -1640,44 +1654,77 @@ app.post("/lost-found/posts/:id/chats", async (req: Request, res: Response) => {
   }
 });
 
+app.post(
+  "/lost-found/uploads",
+  lostFoundUpload.single("file") as unknown as RequestHandler,
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          message: "No file uploaded",
+        });
+      }
+
+      return res.status(201).json({
+        ok: true,
+        imageUrl: `/uploads/lost-found/${req.file.filename}`,
+      });
+    } catch (e) {
+      console.error("Upload failed in POST /lost-found/uploads:", e);
+      return res.status(503).json({
+        message: "Failed to upload image",
+        error: "Database unavailable.",
+      });
+    }
+  },
+);
+
 app.get(
   "/lost-found/chat-threads/:userId",
   async (req: Request, res: Response) => {
     try {
-      const userId = req.params.userId;
+      const userId = String(req.params.userId || "").trim();
+      const username = String(req.query.username || "").trim();
+
+      if (!userId && !username) {
+        return res.status(400).json({
+          message: "userId or username is required",
+        });
+      }
 
       const { rows } = await pool.query(
         `
-      SELECT
-        p.id AS post_id,
-        p.title,
-        p.owner_user_id,
-        p.owner_username,
-        MAX(c.created_at) AS last_message_at,
-        (
-          SELECT c2.message
-          FROM lost_found_chats c2
-          WHERE c2.post_id = p.id
-          ORDER BY c2.created_at DESC
-          LIMIT 1
-        ) AS last_message
-      FROM lost_found_posts p
-      INNER JOIN lost_found_chats c
-        ON c.post_id = p.id
-      WHERE p.owner_user_id = $1
-         OR EXISTS (
-           SELECT 1
-           FROM lost_found_chats c3
-           WHERE c3.post_id = p.id
-             AND c3.sender_label IS NOT NULL
-         )
-      GROUP BY p.id, p.title, p.owner_user_id, p.owner_username
-      ORDER BY MAX(c.created_at) DESC
-      `,
-        [userId],
+        SELECT
+          p.id AS post_id,
+          p.title,
+          p.owner_user_id,
+          p.owner_username,
+          MAX(c.created_at) AS last_message_at,
+          (
+            SELECT c2.message
+            FROM lost_found_chats c2
+            WHERE c2.post_id = p.id
+            ORDER BY c2.created_at DESC
+            LIMIT 1
+          ) AS last_message
+        FROM lost_found_posts p
+        INNER JOIN lost_found_chats c
+          ON c.post_id = p.id
+        WHERE p.owner_user_id = $1
+           OR LOWER(COALESCE(p.owner_username, '')) = LOWER($2)
+           OR EXISTS (
+             SELECT 1
+             FROM lost_found_chats c3
+             WHERE c3.post_id = p.id
+               AND LOWER(COALESCE(c3.sender_label, '')) = LOWER($2)
+           )
+        GROUP BY p.id, p.title, p.owner_user_id, p.owner_username
+        ORDER BY MAX(c.created_at) DESC
+        `,
+        [userId, username],
       );
 
-      res.json(
+      return res.json(
         rows.map((row) => ({
           id: row.post_id,
           postId: row.post_id,
@@ -1690,7 +1737,7 @@ app.get(
       );
     } catch (e) {
       console.error("DB error in GET /lost-found/chat-threads/:userId:", e);
-      res.status(503).json({ error: "Database unavailable." });
+      return res.status(503).json({ error: "Database unavailable." });
     }
   },
 );
@@ -1737,11 +1784,16 @@ app.get("/boundary", async (_req: Request, res: Response) => {
 // 2) Send a location event
 const LocationEventSchema = z.object({
   userId: z.string().min(1),
+  deviceId: z.string().min(1),
   lat: z.number(),
   lng: z.number(),
   accuracyM: z.number().optional(),
   matchedZoneId: z.string().optional().nullable(),
   eventType: z.enum(["PING", "ENTER", "EXIT"]),
+  appState: z
+    .enum(["foreground", "background"])
+    .optional()
+    .default("foreground"),
 });
 
 app.post("/events/location", async (req: Request, res: Response) => {
@@ -1752,8 +1804,15 @@ app.post("/events/location", async (req: Request, res: Response) => {
 
   try {
     await pool.query(
-      `INSERT INTO location_events (user_id, lat, lng, accuracy_m, matched_zone_id, event_type)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
+      `INSERT INTO location_events (
+        user_id,
+        lat,
+        lng,
+        accuracy_m,
+        matched_zone_id,
+        event_type
+      )
+      VALUES ($1,$2,$3,$4,$5,$6)`,
       [
         e.userId,
         e.lat,
@@ -1763,6 +1822,58 @@ app.post("/events/location", async (req: Request, res: Response) => {
         e.eventType,
       ],
     );
+
+    await pool.query(
+      `
+      INSERT INTO active_presence (
+        user_id,
+        device_id,
+        zone_id,
+        lat,
+        lng,
+        accuracy_m,
+        app_state,
+        last_seen_at,
+        created_at,
+        updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW(),NOW())
+      ON CONFLICT (user_id, device_id)
+      DO UPDATE SET
+        zone_id = EXCLUDED.zone_id,
+        lat = EXCLUDED.lat,
+        lng = EXCLUDED.lng,
+        accuracy_m = EXCLUDED.accuracy_m,
+        app_state = EXCLUDED.app_state,
+        last_seen_at = NOW(),
+        updated_at = NOW()
+      `,
+      [
+        e.userId,
+        e.deviceId,
+        e.matchedZoneId ?? null,
+        e.lat,
+        e.lng,
+        e.accuracyM ?? null,
+        e.appState ?? "foreground",
+      ],
+    );
+
+    if (e.eventType === "EXIT") {
+      await pool.query(
+        `
+        UPDATE active_presence
+        SET
+          zone_id = NULL,
+          last_seen_at = NOW(),
+          updated_at = NOW()
+        WHERE user_id = $1
+          AND device_id = $2
+        `,
+        [e.userId, e.deviceId],
+      );
+    }
+
     res.json({ ok: true });
   } catch (err) {
     console.error("DB error in POST /events/location:", err);
@@ -1777,13 +1888,14 @@ app.get("/zones/live", async (_req: Request, res: Response) => {
   try {
     const { rows } = await pool.query(
       `
-      SELECT matched_zone_id as "zoneId", COUNT(*)::int as "pingsLast60s"
-      FROM location_events
-      WHERE matched_zone_id IS NOT NULL
-        AND event_type = 'PING'
-        AND created_at > NOW() - INTERVAL '60 seconds'
-      GROUP BY matched_zone_id
-      `,
+  SELECT
+    zone_id AS "zoneId",
+    COUNT(DISTINCT user_id)::int AS "pingsLast60s"
+  FROM active_presence
+  WHERE zone_id IS NOT NULL
+    AND last_seen_at > NOW() - INTERVAL '90 seconds'
+  GROUP BY zone_id
+  `,
     );
     res.json(rows);
   } catch (e) {
@@ -1808,21 +1920,20 @@ app.get("/zones/occupancy", async (_req: Request, res: Response) => {
         COALESCE(d.description, '') AS description,
         COALESCE(d.area_group, 'common_space') AS area_group,
         COALESCE(d.capacity_mode, 'open') AS capacity_mode,
-        COALESCE(l.pings_last_60s, 0) AS current_count
+        COALESCE(l.active_count, 0) AS current_count
       FROM zones z
       LEFT JOIN zone_details d
         ON d.zone_id = z.id
       LEFT JOIN (
-        SELECT
-          matched_zone_id,
-          COUNT(*)::int AS pings_last_60s
-        FROM location_events
-        WHERE matched_zone_id IS NOT NULL
-          AND event_type = 'PING'
-          AND created_at > NOW() - INTERVAL '60 seconds'
-        GROUP BY matched_zone_id
-      ) l
-        ON l.matched_zone_id = z.id
+  SELECT
+    zone_id,
+    COUNT(DISTINCT user_id)::int AS active_count
+  FROM active_presence
+  WHERE zone_id IS NOT NULL
+    AND last_seen_at > NOW() - INTERVAL '90 seconds'
+  GROUP BY zone_id
+) l
+  ON l.zone_id = z.id
       ORDER BY z.name ASC
       `,
     );
@@ -1843,247 +1954,6 @@ app.get("/zones/occupancy", async (_req: Request, res: Response) => {
     });
   }
 });
-
-// //
-// // ✅ ADMIN IMPORT ENDPOINT (Upload calibrator JSON -> upsert zones)
-// //
-// // const ZoneSchema = z.object({
-// //   id: z.string().min(1),
-// //   name: z.string().min(1),
-// //   type: z.string().min(1),
-// //   polygon_geojson: z.any(),
-// // });
-
-// const ZoneImportSchema = z.object({
-//   id: z.string().min(1),
-//   name: z.string().min(1),
-//   type: z.string().min(1),
-//   polygon_geojson: z.any(),
-//   details: z
-//     .object({
-//       display_name: z.string().optional().nullable(),
-//       capacity: z.number().int().nonnegative().optional().nullable(),
-//       description: z.string().optional().nullable(),
-//       status_override: z.string().optional().nullable(),
-//       area_group: z.string().optional().nullable(),
-//       capacity_mode: z.string().optional().nullable(),
-//     })
-//     .optional()
-//     .nullable(),
-// });
-
-// function normalizeGeoJson(input: any) {
-//   if (input?.type === "Polygon") return input;
-//   if (input?.geometry?.type === "Polygon") return input.geometry;
-//   return input;
-// }
-
-// // function normalizeGeoJson(input: any) {
-// //   if (input?.type === "Polygon") return input;
-// //   if (input?.geometry?.type === "Polygon") return input.geometry;
-// //   return input;
-// // }
-
-// // app.post("/admin/zones/import", async (req: Request, res: Response) => {
-// //   try {
-// //     const body = req.body;
-// //     const zonesRaw = Array.isArray(body) ? body : body?.zones;
-
-// //     if (!Array.isArray(zonesRaw)) {
-// //       return res.status(400).json({
-// //         ok: false,
-// //         message: "Expected JSON array or { zones: [...] }",
-// //       });
-// //     }
-
-// //     const parsed = zonesRaw.map((z) => ZoneSchema.parse(z));
-
-// //     let client;
-// //     try {
-// //       client = await pool.connect();
-// //     } catch (dbErr) {
-// //       console.error("DB error in POST /admin/zones/import:", dbErr);
-// //       return res.status(503).json({
-// //         ok: false,
-// //         message: "Database unavailable. Check DATABASE_URL in apps/api/.env",
-// //       });
-// //     }
-
-// //     try {
-// //       await client.query("BEGIN");
-
-// //       for (const z of parsed) {
-// //         const polygon = normalizeGeoJson(z.polygon_geojson);
-
-// //         if (
-// //           !polygon ||
-// //           polygon.type !== "Polygon" ||
-// //           !Array.isArray(polygon.coordinates)
-// //         ) {
-// //           throw new Error(
-// //             `Zone ${z.id} invalid polygon_geojson (must be GeoJSON Polygon)`,
-// //           );
-// //         }
-
-// //         await client.query(
-// //           `
-// //           INSERT INTO zones (id, name, type, polygon_geojson)
-// //           VALUES ($1, $2, $3, $4::jsonb)
-// //           ON CONFLICT (id)
-// //           DO UPDATE SET
-// //             name = EXCLUDED.name,
-// //             type = EXCLUDED.type,
-// //             polygon_geojson = EXCLUDED.polygon_geojson
-// //           `,
-// //           [z.id, z.name, z.type, JSON.stringify(polygon)],
-// //         );
-// //       }
-
-// //       await client.query("COMMIT");
-// //     } catch (e) {
-// //       await client.query("ROLLBACK");
-// //       throw e;
-// //     } finally {
-// //       client.release();
-// //     }
-
-// //     res.json({ ok: true, imported: parsed.length });
-// //   } catch (e: any) {
-// //     if (
-// //       e?.code === "28P01" ||
-// //       e?.message?.includes("password authentication")
-// //     ) {
-// //       return res.status(503).json({
-// //         ok: false,
-// //         message: "Database unavailable. Check DATABASE_URL in apps/api/.env",
-// //       });
-// //     }
-// //     res.status(400).json({ ok: false, message: e?.message ?? "Import failed" });
-// //   }
-// // });
-
-// app.post("/admin/zones/import", async (req: Request, res: Response) => {
-//   try {
-//     const body = req.body;
-//     const zonesRaw = Array.isArray(body) ? body : body?.zones;
-
-//     if (!Array.isArray(zonesRaw)) {
-//       return res.status(400).json({
-//         ok: false,
-//         message: "Expected JSON array or { zones: [...] }",
-//       });
-//     }
-
-//     const parsed = zonesRaw.map((z) => ZoneImportSchema.parse(z));
-
-//     let client;
-//     try {
-//       client = await pool.connect();
-//     } catch (dbErr) {
-//       console.error("DB error in POST /admin/zones/import:", dbErr);
-//       return res.status(503).json({
-//         ok: false,
-//         message: "Database unavailable. Check DATABASE_URL in apps/api/.env",
-//       });
-//     }
-
-//     try {
-//       await client.query("BEGIN");
-
-//       for (const z of parsed) {
-//         const polygon = normalizeGeoJson(z.polygon_geojson);
-
-//         if (
-//           !polygon ||
-//           polygon.type !== "Polygon" ||
-//           !Array.isArray(polygon.coordinates)
-//         ) {
-//           throw new Error(
-//             `Zone ${z.id} invalid polygon_geojson (must be GeoJSON Polygon)`,
-//           );
-//         }
-
-//         await client.query(
-//           `
-//           INSERT INTO zones (id, name, type, polygon_geojson)
-//           VALUES ($1, $2, $3, $4::jsonb)
-//           ON CONFLICT (id)
-//           DO UPDATE SET
-//             name = EXCLUDED.name,
-//             type = EXCLUDED.type,
-//             polygon_geojson = EXCLUDED.polygon_geojson
-//           `,
-//           [z.id, z.name, z.type, JSON.stringify(polygon)],
-//         );
-
-//         const details = z.details ?? {};
-
-//         await client.query(
-//           `
-//           INSERT INTO zone_details (
-//             zone_id,
-//             display_name,
-//             capacity,
-//             description,
-//             status_override,
-//             created_at,
-//             updated_at,
-//             area_group,
-//             capacity_mode
-//           )
-//           VALUES (
-//             $1,
-//             $2,
-//             $3,
-//             $4,
-//             $5,
-//             NOW(),
-//             NOW(),
-//             $6,
-//             $7
-//           )
-//           ON CONFLICT (zone_id)
-//           DO UPDATE SET
-//             display_name = EXCLUDED.display_name,
-//             capacity = EXCLUDED.capacity,
-//             description = EXCLUDED.description,
-//             status_override = EXCLUDED.status_override,
-//             updated_at = NOW(),
-//             area_group = EXCLUDED.area_group,
-//             capacity_mode = EXCLUDED.capacity_mode
-//           `,
-//           [
-//             z.id,
-//             details.display_name ?? z.name,
-//             details.capacity ?? 0,
-//             details.description ?? null,
-//             details.status_override ?? null,
-//             details.area_group ?? "common_space",
-//             details.capacity_mode ?? "open",
-//           ],
-//         );
-//       }
-
-//       await client.query("COMMIT");
-//     } catch (e) {
-//       await client.query("ROLLBACK");
-//       throw e;
-//     } finally {
-//       client.release();
-//     }
-
-//     return res.json({
-//       ok: true,
-//       imported: parsed.length,
-//     });
-//   } catch (e: any) {
-//     if (
-//       e?.code === "28P01" ||
-//       e?.message?.includes("password authentication")
-//     ) {
-//       return res.status(503).json({
-//         ok: false,
-//         message: "Database unavailable. Check DATABASE_URL in apps/api/.env",
 
 //
 // ✅ ADMIN IMPORT ENDPOINT (Upload calibrator JSON -> upsert zones + zone_details)
@@ -3657,93 +3527,6 @@ app.post(
           request_counseling,
           created_at
         `,
-        [
-          insertedId,
-          complaintId,
-          "ADMIN",
-          parsed.senderLabel ?? "Support Team",
-          parsed.body,
-          parsed.requestCounseling,
-        ],
-      );
-
-      await createComplaintAdminLog({
-        complaintId,
-        actionType: "CHAT_SENT",
-        actorUserId: String(req.headers["x-admin-user-id"] ?? ""),
-        actorUsername: String(req.headers["x-admin-username"] ?? ""),
-        actorEmail: String(req.headers["x-admin-email"] ?? ""),
-        details: {
-          messageId: insertedId,
-          senderLabel: parsed.senderLabel ?? "Support Team",
-        },
-      });
-
-      const row = result.rows[0];
-
-      return res.status(201).json({
-        id: row.id,
-        senderType: row.sender_type,
-        senderLabel: row.sender_label,
-        body: row.body,
-        requestCounseling: row.request_counseling,
-        createdAt: row.created_at,
-        attachments: [],
-      });
-    } catch (e: any) {
-      console.error("DB error in POST /admin/complaints/:id/messages:", e);
-      return res.status(400).json({
-        message: e?.message ?? "Could not send message",
-      });
-    }
-  },
-);
-
-app.post(
-  "/admin/complaints/:id/messages",
-  async (req: Request, res: Response) => {
-    try {
-      const complaintId = req.params.id;
-      const parsed = adminSendComplaintMessageSchema.parse(req.body);
-
-      const complaintCheck = await pool.query(
-        `
-      SELECT id
-      FROM complaint_cases
-      WHERE id = $1
-      LIMIT 1
-      `,
-        [complaintId],
-      );
-
-      if (complaintCheck.rows.length === 0) {
-        return res.status(404).json({
-          message: "Complaint not found",
-        });
-      }
-
-      const insertedId = crypto.randomUUID();
-
-      const result = await pool.query(
-        `
-      INSERT INTO complaint_messages (
-        id,
-        complaint_id,
-        sender_type,
-        sender_label,
-        body,
-        request_counseling,
-        created_at
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, NOW())
-      RETURNING
-        id,
-        sender_type,
-        sender_label,
-        body,
-        request_counseling,
-        created_at
-      `,
         [
           insertedId,
           complaintId,

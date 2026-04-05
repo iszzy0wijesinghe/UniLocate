@@ -22,6 +22,7 @@ import {
   checkUsernameAvailability,
 } from "../../services/api/auth";
 import { useUserProfileStore } from "../../store/useUserProfileStore";
+import { notifyRegisterSuccess } from "../../services/notifications/notificationService";
 
 type Props = NativeStackScreenProps<FirstRunStackParamList, "Register">;
 
@@ -162,6 +163,8 @@ export default function RegisterScreen({ navigation }: Props) {
         userId: user.id,
         username: user.username,
       });
+
+      await notifyRegisterSuccess(user.username);
 
       navigation.replace("LocationPermissions");
     } catch (error: any) {

@@ -28,6 +28,12 @@ import {
 } from "../../services/api/unilocateApi";
 import { useUserProfileStore } from "../../store/useUserProfileStore";
 import { useLocationLogger } from "../location-logs/useLocationLogger";
+import { sendLocationEvent } from "../../services/api/unilocateApi";
+import { getDeviceId } from "../../services/device/getDeviceId";
+import {
+  notifyOfflineMode,
+  notifyOvercrowdedBuilding,
+} from "../../services/notifications/notificationService";
 
 const { width, height } = Dimensions.get("window");
 
@@ -244,6 +250,38 @@ function findMatchingOccupancyZone(
   return partialMatch;
 }
 
+function isPointInPolygon(
+  point: { lat: number; lng: number },
+  polygon: { lat: number; lng: number }[],
+) {
+  let inside = false;
+
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].lng;
+    const yi = polygon[i].lat;
+    const xj = polygon[j].lng;
+    const yj = polygon[j].lat;
+
+    const intersect =
+      yi > point.lat !== yj > point.lat &&
+      point.lng < ((xj - xi) * (point.lat - yi)) / (yj - yi + 0.0000001) + xi;
+
+    if (intersect) inside = !inside;
+  }
+
+  return inside;
+}
+
+function findMatchedZoneId(
+  point: { lat: number; lng: number } | null,
+  zones: CampusZone[],
+) {
+  if (!point) return null;
+
+  const matched = zones.find((zone) => isPointInPolygon(point, zone.polygon));
+  return matched?.id ?? null;
+}
+
 export default function Home() {
   const [selectedChip, setSelectedChip] = useState("Bird Nest");
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
@@ -267,12 +305,30 @@ export default function Home() {
   const [gpsAccuracyText, setGpsAccuracyText] = useState("GPS");
   const [networkSpeedText, setNetworkSpeedText] = useState("-- Mbps");
 
-  const username = useUserProfileStore((state) => state.username);
+  const username = useUserProfileStore((state: any) => state.username);
+  const userId = useUserProfileStore((state: any) => state.userId);
   const displayName = username?.trim() ? username.trim() : "Campus User";
 
   const { point } = useLiveLocation();
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const livePingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
+  const previousZoneIdRef = useRef<string | null>(null);
+
+  const offlineNotifiedRef = useRef(false);
+  const overcrowdedNotifiedRef = useRef<string | null>(null);
+
+  const lastPingSentAtRef = useRef<number>(0);
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+
+  const currentMatchedZoneId = useMemo(() => {
+    if (!point) return null;
+
+    return findMatchedZoneId({ lat: point.lat, lng: point.lng }, zones);
+  }, [point, zones]);
 
   useEffect(() => {
     timerRef.current = setInterval(() => {
@@ -368,6 +424,107 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    if (!networkOk && !offlineNotifiedRef.current) {
+      offlineNotifiedRef.current = true;
+      notifyOfflineMode();
+    }
+
+    if (networkOk) {
+      offlineNotifiedRef.current = false;
+    }
+  }, [networkOk]);
+
+  useEffect(() => {
+    if (!point || !userId || zones.length === 0) return;
+    if (!deviceId) return;
+
+    const sendPresence = async () => {
+      try {
+        const nowTs = Date.now();
+        const nextZoneId = currentMatchedZoneId;
+        const previousZoneId = previousZoneIdRef.current;
+
+        if (previousZoneId !== nextZoneId) {
+          if (previousZoneId) {
+            await sendLocationEvent({
+              userId: String(userId),
+              deviceId,
+              lat: point.lat,
+              lng: point.lng,
+              accuracyM: point.accuracy ?? undefined,
+              matchedZoneId: previousZoneId,
+              eventType: "EXIT",
+              appState: "foreground",
+            });
+          }
+
+          if (nextZoneId) {
+            await sendLocationEvent({
+              userId: String(userId),
+              deviceId,
+              lat: point.lat,
+              lng: point.lng,
+              accuracyM: point.accuracy ?? undefined,
+              matchedZoneId: nextZoneId,
+              eventType: "ENTER",
+              appState: "foreground",
+            });
+          }
+
+          previousZoneIdRef.current = nextZoneId;
+        }
+
+        if (nowTs - lastPingSentAtRef.current >= 30000) {
+          await sendLocationEvent({
+            userId: String(userId),
+            deviceId,
+            lat: point.lat,
+            lng: point.lng,
+            accuracyM: point.accuracy ?? undefined,
+            matchedZoneId: nextZoneId,
+            eventType: "PING",
+            appState: "foreground",
+          });
+
+          lastPingSentAtRef.current = nowTs;
+        }
+      } catch (error) {
+        console.error("[home] failed to send live presence:", error);
+      }
+    };
+
+    sendPresence();
+
+    if (livePingIntervalRef.current) {
+      clearInterval(livePingIntervalRef.current);
+    }
+
+    livePingIntervalRef.current = setInterval(() => {
+      sendPresence();
+    }, 30000);
+
+    return () => {
+      if (livePingIntervalRef.current) {
+        clearInterval(livePingIntervalRef.current);
+        livePingIntervalRef.current = null;
+      }
+    };
+  }, [point, userId, zones.length, currentMatchedZoneId, deviceId]);
+
+  useEffect(() => {
+    const loadDeviceId = async () => {
+      try {
+        const id = await getDeviceId();
+        setDeviceId(id);
+      } catch (error) {
+        console.error("[home] failed to load device id:", error);
+      }
+    };
+
+    loadDeviceId();
+  }, []);
+
   // const selectedZoneData = useMemo(
   //   () => zones.find((z) => z.id === selectedZoneId) ?? null,
   //   [selectedZoneId, zones],
@@ -377,6 +534,21 @@ export default function Home() {
     () => occupancyZones.find((z) => z.id === selectedZoneId) ?? null,
     [selectedZoneId, occupancyZones],
   );
+
+  useEffect(() => {
+    if (
+      selectedZoneData?.status === "Crowded" &&
+      selectedZoneData.id &&
+      overcrowdedNotifiedRef.current !== selectedZoneData.id
+    ) {
+      overcrowdedNotifiedRef.current = selectedZoneData.id;
+      notifyOvercrowdedBuilding(prettyZoneName(selectedZoneData));
+    }
+
+    if (selectedZoneData?.status !== "Crowded") {
+      overcrowdedNotifiedRef.current = null;
+    }
+  }, [selectedZoneData]);
 
   const statusColors = getStatusColors(selectedZoneData?.status);
 

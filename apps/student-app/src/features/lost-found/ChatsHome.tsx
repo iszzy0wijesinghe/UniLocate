@@ -42,14 +42,16 @@ function formatThreadTime(value?: string) {
 export default function ChatsHome() {
   const navigation = useNavigation<Navigation>();
   const tabBarHeight = useBottomTabBarHeight();
+
   const userId = useUserProfileStore((state: any) => state.userId);
+  const username = useUserProfileStore((state) => state.username);
 
   const [threads, setThreads] = React.useState<LostFoundChatThread[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
   const loadThreads = React.useCallback(async () => {
-    if (!userId) {
+    if (!userId && !username?.trim()) {
       setThreads([]);
       setLoading(false);
       return;
@@ -59,7 +61,11 @@ export default function ChatsHome() {
       setLoading(true);
       setError(null);
 
-      const data = await getLostFoundChatThreads(String(userId));
+      const data = await getLostFoundChatThreads(
+        String(userId ?? ""),
+        username?.trim() || "",
+      );
+
       setThreads(data);
     } catch (e: any) {
       setError(e?.message || "Failed to load chats");
@@ -67,7 +73,7 @@ export default function ChatsHome() {
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, username]);
 
   useFocusEffect(
     React.useCallback(() => {

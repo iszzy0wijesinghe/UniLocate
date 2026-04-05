@@ -34,7 +34,11 @@ import type {
   LostFoundStackParamList,
   LostFoundStackScreenProps,
 } from "../../navigation/LostFoundStack";
-import { createLostFoundPost, type ItemCategory } from "./lostFound.api";
+import {
+  createLostFoundPost,
+  uploadLostFoundImage,
+  type ItemCategory,
+} from "./lostFound.api";
 import { getLocationLogs } from "../location-logs/storage";
 import { loadSharedCampusMap } from "../location-logs/sharedMapLoader";
 import type {
@@ -47,6 +51,7 @@ import CampusMap2D, {
 } from "../home/components/CampusMap2D";
 import { useLiveLocation } from "../../services/geo/useLiveLocation";
 import { useUserProfileStore } from "../../store/useUserProfileStore";
+import { notifyLostFoundPosted } from "../../services/notifications/notificationService";
 
 type ReportRoute = RouteProp<LostFoundStackParamList, "ReportItem">;
 type Navigation = LostFoundStackScreenProps<"ReportItem">["navigation"];
@@ -169,6 +174,13 @@ function LocationLogPreviewCard({
   );
 }
 
+function getLocalDateTimeInputMax() {
+  const now = new Date();
+  const offset = now.getTimezoneOffset();
+  const local = new Date(now.getTime() - offset * 60 * 1000);
+  return local.toISOString().slice(0, 16);
+}
+
 export default function ReportItem() {
   const route = useRoute<ReportRoute>();
   const navigation = useNavigation<Navigation>();
@@ -206,6 +218,8 @@ export default function ReportItem() {
   const username = useUserProfileStore((state) => state.username);
   const userId = useUserProfileStore((state: any) => state.userId);
   const initialCenterAppliedRef = useRef(false);
+
+  const now = new Date();
 
   const [formMessage, setFormMessage] = useState<{
     type: "error" | "success";
@@ -378,65 +392,71 @@ export default function ReportItem() {
   };
 
   const handleSubmit = async () => {
-    if (title.trim().length < 5) {
-      setFormMessage({
-        type: "error",
-        title: "Add a better title",
-        text: "Please enter a short title with at least 5 characters.",
-      });
-      return;
-    }
+  if (title.trim().length < 5) {
+    setFormMessage({
+      type: "error",
+      title: "Add a better title",
+      text: "Please enter a short title with at least 5 characters.",
+    });
+    return;
+  }
 
-    if (!approxDateTime) {
-      setFormMessage({
-        type: "error",
-        title: "Date and time missing",
-        text: "Please select the approximate date and time.",
-      });
-      return;
-    }
+  if (!approxDateTime) {
+    setFormMessage({
+      type: "error",
+      title: "Date and time missing",
+      text: "Please select the approximate date and time.",
+    });
+    return;
+  }
 
-    if (!validateStepFour()) return;
+  if (!validateStepFour()) return;
 
-    try {
-      setFormMessage(null);
-      setSubmitting(true);
+  try {
+    setFormMessage(null);
+    setSubmitting(true);
 
-      const post = await createLostFoundPost({
-        type: reportMode,
-        category,
-        title: title.trim(),
-        description,
-        timeHint,
-        images: imageUris,
-        ownerUserId: String(userId ?? "local-user"),
-        ownerUsername: username?.trim() || "Campus User",
-      });
+    const uploadedImages = await Promise.all(
+      imageUris.map((uri) => uploadLostFoundImage(uri)),
+    );
 
-      setCreatedPostId(post.id);
-      setFormMessage({
-        type: "success",
-        title: "Post published successfully",
-        text: "Your lost item post is now live. Hopefully someone will spot it soon.",
-      });
-      setSubmitted(true);
+    const post = await createLostFoundPost({
+      type: reportMode,
+      category,
+      title: title.trim(),
+      description: description.trim(),
+      timeHint,
+      images: uploadedImages,
+      ownerUserId: String(userId ?? "local-user"),
+      ownerUsername: username?.trim() || "Campus User",
+    });
 
-      setTimeout(() => {
-        navigation.navigate("LostFoundHome");
-      }, 1400);
-    } catch (err) {
-      console.error(err);
-      setFormMessage({
-        type: "error",
-        title: "Could not publish post",
-        text:
-          (err as Error).message ||
-          "Network error. Please check your connection and try again.",
-      });
-    } finally {
-      setSubmitting(false);
-    }
-  };
+    await notifyLostFoundPosted(title.trim());
+
+    setCreatedPostId(post.id);
+    setFormMessage({
+      type: "success",
+      title: "Post published successfully",
+      text: "Your lost item post is now live. Hopefully someone will spot it soon.",
+    });
+    setSubmitted(true);
+
+    setTimeout(() => {
+      navigation.navigate("LostFoundHome");
+    }, 1400);
+  } catch (err) {
+    console.error(err);
+    setFormMessage({
+      type: "error",
+      title: "Could not publish post",
+      text:
+        (err as Error).message ||
+        "Network error. Please check your connection and try again.",
+    });
+  } finally {
+    setSubmitting(false);
+  }
+};
 
   const handleCollectedItem = async () => {
     try {
@@ -452,19 +472,23 @@ export default function ReportItem() {
 
   const onChangeDate = (_: any, selected?: Date) => {
     setShowPicker(false);
+
     if (selected) {
-      setApproxDateTime(selected);
-      setTimeHint(selected.toLocaleString());
+      const safeDate = selected > now ? now : selected;
+      setApproxDateTime(safeDate);
+      setTimeHint(safeDate.toLocaleString());
     }
   };
 
   const openAndroidDateTimePicker = () => {
-    const base = approxDateTime ?? new Date();
+    const now = new Date();
+    const base = approxDateTime && approxDateTime <= now ? approxDateTime : now;
 
     DateTimePickerAndroid.open({
       value: base,
       mode: "date",
       is24Hour: true,
+      maximumDate: now,
       onChange: (event: any, selectedDate?: Date) => {
         if (event?.type === "dismissed" || !selectedDate) return;
 
@@ -474,6 +498,9 @@ export default function ReportItem() {
           selectedDate.getMonth(),
           selectedDate.getDate(),
         );
+
+        const maxTime =
+          withDate.toDateString() === now.toDateString() ? now : undefined;
 
         DateTimePickerAndroid.open({
           value: withDate,
@@ -490,8 +517,9 @@ export default function ReportItem() {
               0,
             );
 
-            setApproxDateTime(final);
-            setTimeHint(final.toLocaleString());
+            const safeDate = maxTime && final > now ? now : final;
+            setApproxDateTime(safeDate);
+            setTimeHint(safeDate.toLocaleString());
           },
         });
       },
@@ -718,13 +746,21 @@ export default function ReportItem() {
                   }}
                   value={
                     approxDateTime
-                      ? approxDateTime.toISOString().slice(0, 16)
+                      ? new Date(
+                          approxDateTime.getTime() -
+                            approxDateTime.getTimezoneOffset() * 60000,
+                        )
+                          .toISOString()
+                          .slice(0, 16)
                       : ""
                   }
+                  max={getLocalDateTimeInputMax()}
                   onChange={(e) => {
                     const selected = new Date(e.target.value);
-                    setApproxDateTime(selected);
-                    setTimeHint(selected.toLocaleString());
+                    const safeDate =
+                      selected > new Date() ? new Date() : selected;
+                    setApproxDateTime(safeDate);
+                    setTimeHint(safeDate.toLocaleString());
                   }}
                 />
               ) : Platform.OS === "android" ? (
@@ -771,6 +807,7 @@ export default function ReportItem() {
                       value={approxDateTime ?? new Date()}
                       mode="datetime"
                       display="default"
+                      maximumDate={new Date()}
                       onChange={onChangeDate}
                     />
                   )}

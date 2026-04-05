@@ -31,6 +31,14 @@ import * as ImagePicker from "expo-image-picker";
 type FoundRoute = RouteProp<LostFoundStackParamList, "FoundReport">;
 type Navigation = LostFoundStackScreenProps<"FoundReport">["navigation"];
 
+function isSameDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
 export default function FoundReport() {
   const route = useRoute<FoundRoute>();
   const navigation = useNavigation<Navigation>();
@@ -50,28 +58,36 @@ export default function FoundReport() {
   } | null>(null);
 
   const openDatePicker = () => {
+    const now = new Date();
+
     if (Platform.OS === "android") {
       DateTimePickerAndroid.open({
-        value: whenFound,
+        value: whenFound > now ? now : whenFound,
         mode: "date",
         is24Hour: true,
+        maximumDate: now,
         onChange: onChangeDate,
       });
       return;
     }
+
     setShowDatePicker(true);
   };
 
   const openTimePicker = () => {
+    const now = new Date();
+    const safeBase = whenFound > now ? now : whenFound;
+
     if (Platform.OS === "android") {
       DateTimePickerAndroid.open({
-        value: whenFound,
+        value: safeBase,
         mode: "time",
         is24Hour: true,
         onChange: onChangeTime,
       });
       return;
     }
+
     setShowTimePicker(true);
   };
 
@@ -79,12 +95,27 @@ export default function FoundReport() {
     setShowDatePicker(false);
     if (!selected) return;
 
+    const now = new Date();
     const next = new Date(whenFound);
+
     next.setFullYear(
       selected.getFullYear(),
       selected.getMonth(),
       selected.getDate(),
     );
+
+    if (next > now) {
+      next.setFullYear(now.getFullYear(), now.getMonth(), now.getDate());
+      next.setHours(
+        Math.min(next.getHours(), now.getHours()),
+        next.getHours() >= now.getHours()
+          ? Math.min(next.getMinutes(), now.getMinutes())
+          : next.getMinutes(),
+        0,
+        0,
+      );
+    }
+
     setWhenFound(next);
 
     if (formMessage?.type === "error") setFormMessage(null);
@@ -94,8 +125,15 @@ export default function FoundReport() {
     setShowTimePicker(false);
     if (!selected) return;
 
+    const now = new Date();
     const next = new Date(whenFound);
+
     next.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
+
+    if (isSameDay(next, now) && next > now) {
+      next.setHours(now.getHours(), now.getMinutes(), 0, 0);
+    }
+
     setWhenFound(next);
 
     if (formMessage?.type === "error") setFormMessage(null);
@@ -148,6 +186,8 @@ export default function FoundReport() {
   };
 
   const validateForm = () => {
+    const now = new Date();
+
     if (placeFound.trim().length < 5) {
       setFormMessage({
         type: "error",
@@ -162,6 +202,15 @@ export default function FoundReport() {
         type: "error",
         title: "Date and time missing",
         text: "Please select when you found the item.",
+      });
+      return false;
+    }
+
+    if (whenFound > now) {
+      setFormMessage({
+        type: "error",
+        title: "Invalid date and time",
+        text: "Future date and time cannot be selected.",
       });
       return false;
     }
@@ -213,6 +262,9 @@ export default function FoundReport() {
     });
   };
 
+  const now = new Date();
+  const safePickerValue = whenFound > now ? now : whenFound;
+
   return (
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <View style={styles.container}>
@@ -224,7 +276,8 @@ export default function FoundReport() {
 
         <ScrollView
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.content}>
+          contentContainerStyle={styles.content}
+        >
           <View style={styles.heroCard}>
             <View style={styles.heroIconWrap}>
               <Ionicons
@@ -248,14 +301,16 @@ export default function FoundReport() {
                 formMessage.type === "error"
                   ? styles.messageCardError
                   : styles.messageCardSuccess,
-              ]}>
+              ]}
+            >
               <Text
                 style={[
                   styles.messageTitle,
                   formMessage.type === "error"
                     ? styles.messageTitleError
                     : styles.messageTitleSuccess,
-                ]}>
+                ]}
+              >
                 {formMessage.title}
               </Text>
               <Text style={styles.messageText}>{formMessage.text}</Text>
@@ -282,7 +337,8 @@ export default function FoundReport() {
             <View style={styles.dateTimeRow}>
               <TouchableOpacity
                 style={styles.dateTimeButton}
-                onPress={openDatePicker}>
+                onPress={openDatePicker}
+              >
                 <Ionicons name="calendar-outline" size={18} color="#053668" />
                 <Text style={styles.dateTimeButtonText}>
                   {whenFound.toLocaleDateString()}
@@ -291,7 +347,8 @@ export default function FoundReport() {
 
               <TouchableOpacity
                 style={styles.dateTimeButton}
-                onPress={openTimePicker}>
+                onPress={openTimePicker}
+              >
                 <Ionicons name="time-outline" size={18} color="#053668" />
                 <Text style={styles.dateTimeButtonText}>
                   {whenFound.toLocaleTimeString([], {
@@ -304,16 +361,17 @@ export default function FoundReport() {
 
             {showDatePicker && (
               <DateTimePicker
-                value={whenFound}
+                value={safePickerValue}
                 mode="date"
                 display="default"
+                maximumDate={new Date()}
                 onChange={onChangeDate}
               />
             )}
 
             {showTimePicker && (
               <DateTimePicker
-                value={whenFound}
+                value={safePickerValue}
                 mode="time"
                 display="default"
                 onChange={onChangeTime}
@@ -345,7 +403,8 @@ export default function FoundReport() {
 
             <TouchableOpacity
               style={styles.uploadCard}
-              onPress={pickImageFromGallery}>
+              onPress={pickImageFromGallery}
+            >
               <Ionicons name="image-outline" size={24} color="#053668" />
               <Text style={styles.uploadTitle}>Select image from gallery</Text>
               <Text style={styles.uploadSubtitle}>
@@ -360,7 +419,8 @@ export default function FoundReport() {
                     <Image source={{ uri }} style={styles.previewImage} />
                     <TouchableOpacity
                       style={styles.removeBadge}
-                      onPress={() => removeImageAt(idx)}>
+                      onPress={() => removeImageAt(idx)}
+                    >
                       <Ionicons name="close" size={12} color="#FFFFFF" />
                     </TouchableOpacity>
                   </View>
@@ -373,7 +433,8 @@ export default function FoundReport() {
         <View style={[styles.footer, { paddingBottom: 110 }]}>
           <TouchableOpacity
             style={[styles.footerButton, styles.primaryButton]}
-            onPress={handleSubmit}>
+            onPress={handleSubmit}
+          >
             <Ionicons
               name="chatbubble-ellipses-outline"
               size={18}
@@ -401,9 +462,9 @@ const styles = StyleSheet.create({
   },
 
   content: {
-  paddingTop: 12,
-  paddingBottom: 1,
-},
+    paddingTop: 12,
+    paddingBottom: 1,
+  },
 
   heroCard: {
     flexDirection: "row",

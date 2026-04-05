@@ -18,6 +18,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { FirstRunStackParamList } from "../../navigation/FirstRunNavigator";
 import { loginUser } from "../../services/api/auth";
 import { useUserProfileStore } from "../../store/useUserProfileStore";
+import { notifyLoginSuccess } from "../../services/notifications/notificationService";
 
 type Props = NativeStackScreenProps<FirstRunStackParamList, "Login">;
 
@@ -76,6 +77,8 @@ export default function LoginScreen({ navigation }: Props) {
         username: user.username,
       });
 
+      await notifyLoginSuccess(user.username);
+      
       navigation.replace("LocationPermissions");
     } catch (error: any) {
       Alert.alert("Login failed", error?.message || "Failed to login");
