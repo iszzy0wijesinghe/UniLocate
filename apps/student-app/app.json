@@ -18,6 +18,7 @@
     },
     "android": {
       "package": "com.unilocate.studentapp",
+      "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -30,6 +31,11 @@
     },
     "plugins": [
       "@react-native-community/datetimepicker"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "7b8b3e27-2443-47b0-a3d0-d859e808fed9"
+      }
+    }
   }
 }

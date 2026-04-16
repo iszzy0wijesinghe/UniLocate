@@ -424,15 +424,34 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
+  // useEffect(() => {
+  //   if (!networkOk && !offlineNotifiedRef.current) {
+  //     offlineNotifiedRef.current = true;
+  //     notifyOfflineMode();
+  //   }
+
+  //   if (networkOk) {
+  //     offlineNotifiedRef.current = false;
+  //   }
+  // }, [networkOk]);
+
   useEffect(() => {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+
     if (!networkOk && !offlineNotifiedRef.current) {
-      offlineNotifiedRef.current = true;
-      notifyOfflineMode();
+      timeout = setTimeout(() => {
+        offlineNotifiedRef.current = true;
+        notifyOfflineMode();
+      }, 5000);
     }
 
     if (networkOk) {
       offlineNotifiedRef.current = false;
     }
+
+    return () => {
+      if (timeout) clearTimeout(timeout);
+    };
   }, [networkOk]);
 
   useEffect(() => {

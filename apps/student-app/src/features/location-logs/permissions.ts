@@ -2,9 +2,8 @@
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Location from "expo-location";
-import { Platform } from "react-native";
-import Constants from "expo-constants";
 import { Barometer } from "expo-sensors";
+import { requestNotificationPermission as requestAppNotificationPermission } from "../../services/notifications/notificationService";
 
 export type PermissionState = {
   locationGranted?: boolean;
@@ -22,51 +21,37 @@ export type PermissionFlowResult = {
 
 const PERMISSION_STATE_KEY = "unilocate-permission-state-v1";
 
-const isAndroidExpoGo =
-  Platform.OS === "android" && Constants.appOwnership === "expo";
-
 export async function requestLocationPermission(): Promise<PermissionFlowResult> {
-  const result = await Location.requestForegroundPermissionsAsync();
-
-  return {
-    granted: result.status === "granted",
-    available: true,
-  };
-}
-
-export async function requestNotificationPermission(): Promise<PermissionFlowResult> {
-  if (Platform.OS === "web") {
-    return { granted: false, available: false };
-  }
-
-  if (isAndroidExpoGo) {
-    console.log(
-      "[permissionFlow] notifications unavailable in Expo Go on Android",
-    );
-    return { granted: false, available: false };
-  }
-
   try {
-    const Notifications = require("expo-notifications");
-
-    const current = await Notifications.getPermissionsAsync();
-
-    if (current.status === "granted") {
-      return {
-        granted: true,
-        available: true,
-      };
-    }
-
-    const requested = await Notifications.requestPermissionsAsync();
+    const result = await Location.requestForegroundPermissionsAsync();
 
     return {
-      granted: requested.status === "granted",
+      granted: result.status === "granted",
       available: true,
     };
   } catch (error) {
-    console.log("[permissionFlow] notification module unavailable:", error);
-    return { granted: false, available: false };
+    console.log("[permissionFlow] location permission failed:", error);
+    return {
+      granted: false,
+      available: false,
+    };
+  }
+}
+
+export async function requestNotificationPermission(): Promise<PermissionFlowResult> {
+  try {
+    const granted = await requestAppNotificationPermission();
+
+    return {
+      granted,
+      available: true,
+    };
+  } catch (error) {
+    console.log("[permissionFlow] notification permission failed:", error);
+    return {
+      granted: false,
+      available: false,
+    };
   }
 }
 
@@ -106,12 +91,14 @@ export async function savePermissionOnboardingState(
   await AsyncStorage.setItem(PERMISSION_STATE_KEY, JSON.stringify(next));
 }
 
+
 // /** @format */
 
 // import AsyncStorage from "@react-native-async-storage/async-storage";
 // import * as Location from "expo-location";
+// import { Platform } from "react-native";
+// import Constants from "expo-constants";
 // import { Barometer } from "expo-sensors";
-// import { requestNotificationPermission as requestAppNotificationPermission } from "../../services/notifications/notificationService";
 
 // export type PermissionState = {
 //   locationGranted?: boolean;
@@ -129,6 +116,9 @@ export async function savePermissionOnboardingState(
 
 // const PERMISSION_STATE_KEY = "unilocate-permission-state-v1";
 
+// const isAndroidExpoGo =
+//   Platform.OS === "android" && Constants.appOwnership === "expo";
+
 // export async function requestLocationPermission(): Promise<PermissionFlowResult> {
 //   const result = await Location.requestForegroundPermissionsAsync();
 
@@ -139,12 +129,39 @@ export async function savePermissionOnboardingState(
 // }
 
 // export async function requestNotificationPermission(): Promise<PermissionFlowResult> {
-//   const granted = await requestAppNotificationPermission();
+//   if (Platform.OS === "web") {
+//     return { granted: false, available: false };
+//   }
 
-//   return {
-//     granted,
-//     available: true,
-//   };
+//   if (isAndroidExpoGo) {
+//     console.log(
+//       "[permissionFlow] notifications unavailable in Expo Go on Android",
+//     );
+//     return { granted: false, available: false };
+//   }
+
+//   try {
+//     const Notifications = require("expo-notifications");
+
+//     const current = await Notifications.getPermissionsAsync();
+
+//     if (current.status === "granted") {
+//       return {
+//         granted: true,
+//         available: true,
+//       };
+//     }
+
+//     const requested = await Notifications.requestPermissionsAsync();
+
+//     return {
+//       granted: requested.status === "granted",
+//       available: true,
+//     };
+//   } catch (error) {
+//     console.log("[permissionFlow] notification module unavailable:", error);
+//     return { granted: false, available: false };
+//   }
 // }
 
 // export async function checkBarometerAvailability(): Promise<boolean> {
@@ -182,3 +199,5 @@ export async function savePermissionOnboardingState(
 //   const next = { ...current, ...partial };
 //   await AsyncStorage.setItem(PERMISSION_STATE_KEY, JSON.stringify(next));
 // }
+
+

@@ -30,27 +30,27 @@ export default function ComplaintsStackNavigator() {
         <Stack.Screen
           name="ComplaintsHome"
           component={ComplaintsHome}
-          options={{ title: 'Complaints' }}
+          options={{ headerShown: false }}
         />
         <Stack.Screen
           name="NewComplaint"
           component={NewComplaint}
-          options={{ title: 'New complaint' }}
+          options={{ headerShown: false }}
         />
         <Stack.Screen
           name="ReconnectComplaint"
           component={ReconnectComplaint}
-          options={{ title: 'Reconnect case' }}
+          options={{ headerShown: false }}
         />
         <Stack.Screen
           name="ComplaintDetails"
           component={ComplaintDetails}
-          options={{ title: 'Complaint details' }}
+          options={{ headerShown: false }}
         />
         <Stack.Screen
           name="ComplaintChat"
           component={Chat}
-          options={{ title: 'Anonymous chat' }}
+          options={{ headerShown: false }}
         />
       </Stack.Navigator>
     </QueryClientProvider>
