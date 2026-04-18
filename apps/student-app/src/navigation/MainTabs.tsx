@@ -4,12 +4,14 @@ import Home from "../features/home/Home";
 import LostFoundStackNavigator from "./LostFoundStack";
 import ComplaintsStackNavigator from "./ComplaintsStack";
 import SettingsNavigator from "./SettingsNavigator";
+import EduHubNavigator from "./EduHubNavigator";
 import CustomTabBar from "./CustomTabBar";
 
 export type MainTabParamList = {
   Home: undefined;
   LostFound: undefined;
   Complaints: undefined;
+  EduHub: undefined;
   Settings: undefined;
 };
 
@@ -26,13 +28,19 @@ export default function MainTabs() {
       <Tab.Screen
         name="LostFound"
         component={LostFoundStackNavigator}
-        options={{ title: "Lost & Found", headerShown: false }}
+        options={{ title: "Lost", headerShown: false }}
       />
 
       <Tab.Screen
         name="Complaints"
         component={ComplaintsStackNavigator}
         options={{ title: "Complaints", headerShown: false }}
+      />
+
+      <Tab.Screen
+        name="EduHub"
+        component={EduHubNavigator}
+        options={{ title: "EduHub", headerShown: false }}
       />
 
       <Tab.Screen

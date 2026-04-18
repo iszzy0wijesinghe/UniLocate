@@ -43,11 +43,46 @@ const lostFoundStorage = multer.diskStorage({
 
 const lostFoundUpload = multer({ storage: lostFoundStorage });
 
+const eduHubUploadsDir = path.join(process.cwd(), "uploads", "eduhub");
+fs.mkdirSync(eduHubUploadsDir, { recursive: true });
+
+const eduHubStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, eduHubUploadsDir),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `${crypto.randomUUID()}${ext}`);
+  },
+});
+
+const eduHubUpload = multer({
+  storage: eduHubStorage,
+  limits: {
+    fileSize: 15 * 1024 * 1024,
+  },
+  fileFilter: (_req, file, cb) => {
+    const allowedMimeTypes = [
+      "application/pdf",
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/webp",
+    ];
+
+    if (allowedMimeTypes.includes(file.mimetype)) {
+      cb(null, true);
+      return;
+    }
+
+    cb(new Error("Only PDF and image files are allowed"));
+  },
+});
+
 // IMPORTANT: increase JSON limit for polygons
 app.use(express.json({ limit: "10mb" }));
 app.use(cors());
 app.use("/uploads/complaints", express.static(complaintUploadsDir));
 app.use("/uploads/lost-found", express.static(lostFoundUploadsDir));
+app.use("/uploads/eduhub", express.static(eduHubUploadsDir));
 
 function getOccupancyStatus(currentCount: number, capacity: number) {
   if (!capacity || capacity <= 0) return "Unknown";
@@ -2821,47 +2856,6 @@ app.post(
   },
 );
 
-// app.get(
-//   "/api/public/cases/me/messages",
-//   async (req: Request, res: Response) => {
-//     try {
-//       const session = await getComplaintSession(req);
-
-//       const { rows } = await pool.query(
-//         `
-//       SELECT
-//         id,
-//         sender_type,
-//         sender_label,
-//         body,
-//         request_counseling,
-//         created_at
-//       FROM complaint_messages
-//       WHERE complaint_id = $1
-//       ORDER BY created_at ASC
-//       `,
-//         [session.complaint_id],
-//       );
-
-//       return res.json(
-//         rows.map((message) => ({
-//           id: message.id,
-//           senderType: message.sender_type,
-//           senderLabel: message.sender_label,
-//           body: message.body,
-//           requestCounseling: message.request_counseling,
-//           createdAt: message.created_at,
-//         })),
-//       );
-//     } catch (error) {
-//       return res.status(401).json({
-//         message:
-//           error instanceof Error ? error.message : "Could not load messages",
-//       });
-//     }
-//   },
-// );
-
 app.get(
   "/api/public/cases/me/messages",
   async (req: Request, res: Response) => {
@@ -2918,67 +2912,6 @@ app.get(
     }
   },
 );
-
-// app.post(
-//   "/api/public/cases/me/messages",
-//   async (req: Request, res: Response) => {
-//     try {
-//       const session = await getComplaintSession(req);
-//       const parsed = sendComplaintMessageSchema.parse(req.body);
-
-//       await pool.query(
-//         `
-//       INSERT INTO complaint_messages (
-//         id,
-//         complaint_id,
-//         sender_type,
-//         sender_label,
-//         body,
-//         request_counseling,
-//         created_at
-//       )
-//       VALUES ($1, $2, $3, $4, $5, $6, NOW())
-//       `,
-//         [
-//           crypto.randomUUID(),
-//           session.complaint_id,
-//           "STUDENT",
-//           "You",
-//           parsed.body,
-//           parsed.requestCounseling,
-//         ],
-//       );
-
-//       await pool.query(
-//         `
-//       UPDATE complaint_cases
-//       SET
-//         status = CASE
-//           WHEN $2 = true THEN 'NEED_MORE_INFO'
-//           ELSE status
-//         END,
-//         updated_at = NOW()
-//       WHERE id = $1
-//       `,
-//         [session.complaint_id, parsed.requestCounseling],
-//       );
-
-//       const complaint = await buildComplaintResponse(session.complaint_id);
-
-//       return res.json({
-//         complaint,
-//         messages: complaint.messages,
-//         challengeRequired: false,
-//       });
-//     } catch (error) {
-//       console.error("Send complaint message failed:", error);
-//       return res.status(400).json({
-//         message:
-//           error instanceof Error ? error.message : "Could not send message",
-//       });
-//     }
-//   },
-// );
 
 app.post(
   "/api/public/cases/me/messages",
@@ -3568,6 +3501,270 @@ app.post(
     }
   },
 );
+
+const EduHubCreateTextNoteSchema = z.object({
+  title: z.string().min(3).max(200),
+  module: z.string().min(2).max(100),
+  noteType: z.literal("Text"),
+  contentText: z.string().min(10),
+  uploadedByUserId: z.string().min(1),
+  uploadedByUsername: z.string().min(1).max(120),
+});
+
+const EduHubUploadNoteBodySchema = z.object({
+  title: z.string().min(3).max(200),
+  module: z.string().min(2).max(100),
+  noteType: z.union([z.literal("PDF"), z.literal("Image")]),
+  uploadedByUserId: z.string().min(1),
+  uploadedByUsername: z.string().min(1).max(120),
+});
+
+function mapEduHubRow(row: any) {
+  return {
+    id: row.id,
+    title: row.title,
+    module: row.module,
+    noteType: row.note_type,
+    contentText: row.content_text,
+    fileUrl: row.file_url,
+    fileName: row.file_name,
+    mimeType: row.mime_type,
+    uploadedByUserId: row.uploaded_by_user_id,
+    uploadedByUsername: row.uploaded_by_username,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+//
+// 🔹 EDUHUB NOTES
+//
+
+app.post("/eduhub/notes", async (req: Request, res: Response) => {
+  const parsed = EduHubCreateTextNoteSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Invalid note data",
+      error: parsed.error.flatten(),
+    });
+  }
+
+  const data = parsed.data;
+
+  try {
+    const result = await pool.query(
+      `
+      INSERT INTO eduhub_notes (
+        id,
+        title,
+        module,
+        note_type,
+        content_text,
+        file_url,
+        file_name,
+        mime_type,
+        uploaded_by_user_id,
+        uploaded_by_username,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        $1,$2,$3,$4,$5,NULL,NULL,NULL,$6,$7,NOW(),NOW()
+      )
+      RETURNING *
+      `,
+      [
+        crypto.randomUUID(),
+        data.title.trim(),
+        data.module.trim(),
+        data.noteType,
+        data.contentText.trim(),
+        data.uploadedByUserId,
+        data.uploadedByUsername.trim(),
+      ],
+    );
+
+    return res.status(201).json(mapEduHubRow(result.rows[0]));
+  } catch (e) {
+    console.error("DB error in POST /eduhub/notes:", e);
+    return res.status(503).json({
+      message: "Failed to create text note",
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.post(
+  "/eduhub/notes/upload",
+  eduHubUpload.single("file") as unknown as RequestHandler,
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          message: "No file uploaded",
+        });
+      }
+
+      const parsed = EduHubUploadNoteBodySchema.safeParse(req.body);
+
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: "Invalid note upload data",
+          error: parsed.error.flatten(),
+        });
+      }
+
+      const data = parsed.data;
+
+      const fileUrl = `/uploads/eduhub/${req.file.filename}`;
+
+      const result = await pool.query(
+        `
+        INSERT INTO eduhub_notes (
+          id,
+          title,
+          module,
+          note_type,
+          content_text,
+          file_url,
+          file_name,
+          mime_type,
+          uploaded_by_user_id,
+          uploaded_by_username,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          $1,$2,$3,$4,NULL,$5,$6,$7,$8,$9,NOW(),NOW()
+        )
+        RETURNING *
+        `,
+        [
+          crypto.randomUUID(),
+          data.title.trim(),
+          data.module.trim(),
+          data.noteType,
+          fileUrl,
+          req.file.originalname,
+          req.file.mimetype,
+          data.uploadedByUserId,
+          data.uploadedByUsername.trim(),
+        ],
+      );
+
+      return res.status(201).json(mapEduHubRow(result.rows[0]));
+    } catch (e: any) {
+      console.error("DB error in POST /eduhub/notes/upload:", e);
+
+      return res.status(400).json({
+        message: e?.message ?? "Failed to upload note",
+      });
+    }
+  },
+);
+
+app.get("/eduhub/notes", async (req: Request, res: Response) => {
+  const uploadedByUserId = String(req.query.uploadedByUserId ?? "").trim();
+  const search = String(req.query.search ?? "").trim();
+
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT *
+      FROM eduhub_notes
+      WHERE ($1 = '' OR uploaded_by_user_id = $1)
+        AND (
+          $2 = ''
+          OR title ILIKE '%' || $2 || '%'
+          OR module ILIKE '%' || $2 || '%'
+          OR uploaded_by_username ILIKE '%' || $2 || '%'
+          OR content_text ILIKE '%' || $2 || '%'
+        )
+      ORDER BY updated_at DESC, created_at DESC
+      `,
+      [uploadedByUserId, search],
+    );
+
+    return res.json(rows.map(mapEduHubRow));
+  } catch (e) {
+    console.error("DB error in GET /eduhub/notes:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.get("/eduhub/notes/:id", async (req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT *
+      FROM eduhub_notes
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [req.params.id],
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        message: "Note not found",
+      });
+    }
+
+    return res.json(mapEduHubRow(rows[0]));
+  } catch (e) {
+    console.error("DB error in GET /eduhub/notes/:id:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.delete("/eduhub/notes/:id", async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query(
+      `
+      DELETE FROM eduhub_notes
+      WHERE id = $1
+      RETURNING *
+      `,
+      [req.params.id],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        message: "Note not found",
+      });
+    }
+
+    const row = result.rows[0];
+
+    if (row.file_url) {
+      const filePath = path.join(
+        process.cwd(),
+        row.file_url.replace(/^\/+/, ""),
+      );
+      fs.unlink(filePath, (err) => {
+        if (err) {
+          console.warn("Failed to delete EduHub file:", filePath, err.message);
+        }
+      });
+    }
+
+    return res.json({
+      ok: true,
+      deletedId: row.id,
+    });
+  } catch (e) {
+    console.error("DB error in DELETE /eduhub/notes/:id:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
 const port = Number(process.env.PORT || 4000);
 const host = "0.0.0.0";
 
