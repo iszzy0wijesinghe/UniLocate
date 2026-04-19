@@ -17,3 +17,5 @@ export type CreateLostFoundPostInput = Omit<
   LostFoundPost,
   'id' | 'createdAt' | 'status'
 >;
+
+export * from './complaints';
