@@ -3502,6 +3502,9 @@ app.post(
   },
 );
 
+
+
+// 🔹 EDUHUB NOTES
 const EduHubCreateTextNoteSchema = z.object({
   title: z.string().min(3).max(200),
   module: z.string().min(2).max(100),
@@ -3850,6 +3853,12 @@ Your job is to:
     });
   }
 });
+
+
+
+
+
+
 
 const port = Number(process.env.PORT || 4000);
 const host = "0.0.0.0";
