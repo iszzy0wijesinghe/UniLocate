@@ -11,14 +11,14 @@ import {
   Text,
   View,
   useWindowDimensions,
-  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import Constants from "expo-constants";
+import { WebView } from "react-native-webview";
+import * as WebBrowser from "expo-web-browser";
 
 import type { EduHubStackParamList } from "../../../navigation/EduHubNavigator";
 import { getEduHubFileUrl, getEduHubNoteById } from "../services/eduhub.api";
@@ -26,20 +26,140 @@ import type { EduHubNote } from "../types/eduhub";
 
 type Props = NativeStackScreenProps<EduHubStackParamList, "NoteDetails">;
 
-const isExpoGo =
-  Constants.appOwnership === "expo" ||
-  Constants.executionEnvironment === "storeClient";
-
-let PdfComponent: any = null;
-
-try {
-  PdfComponent = require("react-native-pdf").default;
-} catch {
-  PdfComponent = null;
-}
-
 function formatFullDate(value: string) {
   return new Date(value).toLocaleString();
+}
+
+function buildPdfViewerHtml(fileUrl: string) {
+  const escapedUrl = JSON.stringify(fileUrl);
+
+  return `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=yes"
+        />
+        <style>
+          html, body {
+            margin: 0;
+            padding: 0;
+            background: #F8FAFC;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          }
+
+          #app {
+            min-height: 100%;
+            background: #F8FAFC;
+            padding: 12px;
+            box-sizing: border-box;
+          }
+
+          #status {
+            font-size: 14px;
+            color: #667085;
+            text-align: center;
+            padding: 16px 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+          }
+
+          .page {
+            margin: 0 auto 12px auto;
+            background: white;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            border-radius: 12px;
+            overflow: hidden;
+            width: fit-content;
+            max-width: 100%;
+          }
+
+          canvas {
+            display: block;
+            max-width: 100%;
+            height: auto;
+          }
+        </style>
+      </head>
+      <body>
+        <div id="app">
+          <div id="status">Loading document preview...</div>
+          <div id="pages"></div>
+        </div>
+
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.js"></script>
+        <script>
+          const pdfUrl = ${escapedUrl};
+          const statusEl = document.getElementById("status");
+          const pagesEl = document.getElementById("pages");
+
+          function updateStatus(message) {
+            statusEl.textContent = message;
+          }
+
+          updateStatus("Loading PDF.js...\\n" + pdfUrl);
+
+          if (!window.pdfjsLib) {
+            updateStatus("PDF.js library failed to load.");
+          } else {
+            pdfjsLib.GlobalWorkerOptions.workerSrc =
+              "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.js";
+
+            async function renderPdf() {
+              try {
+                updateStatus("Fetching document...\\n" + pdfUrl);
+
+                const loadingTask = pdfjsLib.getDocument({
+                  url: pdfUrl,
+                  withCredentials: false,
+                });
+
+                const pdf = await loadingTask.promise;
+
+                updateStatus("Rendering " + pdf.numPages + " page(s)...");
+
+                for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                  const page = await pdf.getPage(pageNum);
+
+                  const viewport = page.getViewport({ scale: 1.35 });
+                  const canvas = document.createElement("canvas");
+                  const context = canvas.getContext("2d");
+
+                  canvas.width = viewport.width;
+                  canvas.height = viewport.height;
+
+                  const wrapper = document.createElement("div");
+                  wrapper.className = "page";
+                  wrapper.appendChild(canvas);
+                  pagesEl.appendChild(wrapper);
+
+                  await page.render({
+                    canvasContext: context,
+                    viewport,
+                  }).promise;
+                }
+
+                statusEl.style.display = "none";
+              } catch (error) {
+                console.error("PDF render failed", error);
+                updateStatus(
+                  "Preview could not be loaded.\\n\\n" +
+                  (error && error.message ? error.message : String(error))
+                );
+              }
+            }
+
+            renderPdf();
+          }
+        </script>
+      </body>
+    </html>
+  `;
 }
 
 export default function NoteDetails({ navigation, route }: Props) {
@@ -52,7 +172,7 @@ export default function NoteDetails({ navigation, route }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [pdfLoading, setPdfLoading] = useState(true);
-  const [pdfError, setPdfError] = useState("");
+  const [pdfFailed, setPdfFailed] = useState(false);
 
   const loadNote = async () => {
     try {
@@ -74,20 +194,40 @@ export default function NoteDetails({ navigation, route }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [noteId]);
 
-  const fileUrl = useMemo(() => getEduHubFileUrl(note?.fileUrl), [note?.fileUrl]);
+  useEffect(() => {
+    setPdfLoading(true);
+    setPdfFailed(false);
+  }, [note?.id]);
 
-  const canUseNativePdf =
-    !!PdfComponent && !isExpoGo && note?.noteType === "PDF" && !!fileUrl;
+  const fileUrl = useMemo(
+    () => getEduHubFileUrl(note?.fileUrl),
+    [note?.fileUrl],
+  );
+
+  const pdfHtml = useMemo(() => {
+    if (!fileUrl || note?.noteType !== "PDF") return "";
+    return buildPdfViewerHtml(fileUrl);
+  }, [fileUrl, note?.noteType]);
 
   const handleOpenFile = async () => {
     if (!fileUrl) return;
 
     try {
-      const supported = await Linking.canOpenURL(fileUrl);
-      if (!supported) return;
-      await Linking.openURL(fileUrl);
+      await WebBrowser.openBrowserAsync(fileUrl, {
+        presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+        showTitle: true,
+      });
     } catch (err) {
       console.error("[eduhub] failed to open file:", err);
+
+      try {
+        const supported = await Linking.canOpenURL(fileUrl);
+        if (supported) {
+          await Linking.openURL(fileUrl);
+        }
+      } catch (linkErr) {
+        console.error("[eduhub] fallback open failed:", linkErr);
+      }
     }
   };
 
@@ -235,105 +375,38 @@ export default function NoteDetails({ navigation, route }: Props) {
                     <Text style={styles.viewerTitle}>Document Preview</Text>
                   </View>
 
-                  {canUseNativePdf && fileUrl ? (
-                    <View style={styles.pdfShell}>
-                      <PdfComponent
-                        source={{
-                          uri: fileUrl,
-                          cache: true,
-                        }}
-                        trustAllCerts={Platform.OS === "android"}
-                        style={styles.pdf}
-                        enablePaging={false}
-                        horizontal={false}
-                        spacing={8}
-                        fitPolicy={2}
-                        onLoadComplete={() => {
-                          setPdfLoading(false);
-                          setPdfError("");
-                        }}
-                        onLoadProgress={() => {
-                          if (pdfLoading) return;
-                        }}
-                        onError={(err: any) => {
-                          console.error("[eduhub] pdf render error:", err);
-                          setPdfLoading(false);
-                          setPdfError("Could not render the PDF preview.");
-                        }}
-                        onPressLink={(uri: string) => {
-                          Linking.openURL(uri).catch(() => {});
-                        }}
+                  <View style={styles.pdfPreviewCard}>
+                    <View style={styles.pdfPreviewIconWrap}>
+                      <Ionicons
+                        name="document-text-outline"
+                        size={34}
+                        color="#C2410C"
                       />
-
-                      {pdfLoading ? (
-                        <View style={styles.pdfOverlayLoading}>
-                          <ActivityIndicator size="small" color="#053668" />
-                          <Text style={styles.pdfOverlayText}>
-                            Loading document preview...
-                          </Text>
-                        </View>
-                      ) : null}
-
-                      {pdfError ? (
-                        <View style={styles.pdfOverlayError}>
-                          <Ionicons
-                            name="alert-circle-outline"
-                            size={22}
-                            color="#C2410C"
-                          />
-                          <Text style={styles.pdfOverlayErrorText}>
-                            {pdfError}
-                          </Text>
-
-                          <Pressable
-                            style={styles.openFileBtn}
-                            onPress={handleOpenFile}>
-                            <Ionicons
-                              name="open-outline"
-                              size={16}
-                              color="#FFFFFF"
-                            />
-                            <Text style={styles.openFileBtnText}>
-                              Open Document
-                            </Text>
-                          </Pressable>
-                        </View>
-                      ) : null}
                     </View>
-                  ) : (
-                    <View style={styles.pdfPreviewCard}>
-                      <View style={styles.pdfPreviewIconWrap}>
+
+                    <Text style={styles.pdfPreviewTitle}>{note.title}</Text>
+
+                    <Text style={styles.pdfPreviewSubtitle}>
+                      PDF preview inside this screen is limited in Expo Go. Open
+                      the document in the app browser for the best available
+                      experience.
+                    </Text>
+
+                    {fileUrl ? (
+                      <Pressable
+                        style={styles.openFileBtn}
+                        onPress={handleOpenFile}>
                         <Ionicons
-                          name="document-text-outline"
-                          size={34}
-                          color="#C2410C"
+                          name="open-outline"
+                          size={16}
+                          color="#FFFFFF"
                         />
-                      </View>
-
-                      <Text style={styles.pdfPreviewTitle}>{note.title}</Text>
-
-                      <Text style={styles.pdfPreviewSubtitle}>
-                        {isExpoGo
-                          ? "Native PDF preview is not supported in Expo Go. Open the document here, or test the built-in preview in a development build."
-                          : "PDF preview is not available right now. Open the document to view it."}
-                      </Text>
-
-                      {fileUrl ? (
-                        <Pressable
-                          style={styles.openFileBtn}
-                          onPress={handleOpenFile}>
-                          <Ionicons
-                            name="open-outline"
-                            size={16}
-                            color="#FFFFFF"
-                          />
-                          <Text style={styles.openFileBtnText}>
-                            Open Document
-                          </Text>
-                        </Pressable>
-                      ) : null}
-                    </View>
-                  )}
+                        <Text style={styles.openFileBtnText}>
+                          Open Document
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
 
                   <View style={styles.viewerFooter}>
                     <Text style={styles.viewerFooterLabel}>Uploaded by</Text>
@@ -581,15 +654,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#F8FAFC",
     position: "relative",
   },
-  pdf: {
+  pdfWebView: {
     flex: 1,
-    width: "100%",
-    height: "100%",
     backgroundColor: "#F8FAFC",
   },
   pdfOverlayLoading: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(248,250,252,0.92)",
+    backgroundColor: "rgba(248,250,252,0.94)",
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
@@ -597,21 +668,6 @@ const styles = StyleSheet.create({
   pdfOverlayText: {
     fontSize: 13,
     color: "#667085",
-    fontWeight: "600",
-  },
-  pdfOverlayError: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(255,247,237,0.96)",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 24,
-  },
-  pdfOverlayErrorText: {
-    marginTop: 10,
-    fontSize: 13,
-    lineHeight: 19,
-    color: "#9A3412",
-    textAlign: "center",
     fontWeight: "600",
   },
 

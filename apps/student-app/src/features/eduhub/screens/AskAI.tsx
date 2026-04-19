@@ -2,6 +2,7 @@
 
 import React, { useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -17,6 +18,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import type { EduHubStackParamList } from "../../../navigation/EduHubNavigator";
+import { askEduHubAI } from "../services/eduhub.api";
 
 type Props = NativeStackScreenProps<EduHubStackParamList, "AskAI">;
 
@@ -39,52 +41,29 @@ export default function AskAI({ navigation }: Props) {
   const listRef = useRef<FlatList<Message>>(null);
 
   const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
       role: "assistant",
-      text: "Hi, I’m your EduHub study assistant. Ask me to explain a concept, summarize a topic, or generate exam questions.",
+      text: "Hi, I’m your EduHub study assistant. Ask me to explain a concept, summarize a topic, create MCQs, or prepare 5-mark answers.",
     },
   ]);
 
-  const canSend = useMemo(() => draft.trim().length > 0, [draft]);
+  const canSend = useMemo(
+    () => draft.trim().length > 0 && !loading,
+    [draft, loading],
+  );
 
-  const addAssistantReply = (userText: string) => {
-    const lower = userText.toLowerCase();
-
-    let reply =
-      "I can help explain this topic, summarize it, or turn it into revision questions.";
-
-    if (lower.includes("explain")) {
-      reply =
-        "Here is a simpler explanation: break the topic into definition, purpose, process, and example. This makes revision much easier.";
-    } else if (lower.includes("summary") || lower.includes("summarize")) {
-      reply =
-        "Summary: identify the main concept, list the key points, and note one practical example for each point.";
-    } else if (lower.includes("mcq")) {
-      reply =
-        "I can generate MCQs from your notes. For now, think in terms of definitions, differences, and application-based questions.";
-    } else if (lower.includes("5-mark") || lower.includes("question")) {
-      reply =
-        "Possible 5-mark approach: define the concept, explain 3 core points, then finish with a short example or advantage.";
-    }
-
-    const assistantMessage: Message = {
-      id: `${Date.now()}-assistant`,
-      role: "assistant",
-      text: reply,
-    };
-
-    setMessages((prev) => [...prev, assistantMessage]);
-
+  const scrollToBottom = () => {
     setTimeout(() => {
       listRef.current?.scrollToEnd({ animated: true });
     }, 80);
   };
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const trimmed = draft.trim();
-    if (!trimmed) return;
+    if (!trimmed || loading) return;
 
     const userMessage: Message = {
       id: `${Date.now()}-user`,
@@ -94,25 +73,55 @@ export default function AskAI({ navigation }: Props) {
 
     setMessages((prev) => [...prev, userMessage]);
     setDraft("");
+    setLoading(true);
+    scrollToBottom();
 
-    setTimeout(() => {
-      listRef.current?.scrollToEnd({ animated: true });
-    }, 80);
+    try {
+      const result = await askEduHubAI({
+        message: trimmed,
+        messages: [...messages, userMessage].map((item) => ({
+          role: item.role,
+          text: item.text,
+        })),
+      });
 
-    setTimeout(() => {
-      addAssistantReply(trimmed);
-    }, 350);
+      const assistantMessage: Message = {
+        id: `${Date.now()}-assistant`,
+        role: "assistant",
+        text:
+          result.answer?.trim() ||
+          "I could not generate a response right now. Please try again.",
+      };
+
+      setMessages((prev) => [...prev, assistantMessage]);
+      scrollToBottom();
+    } catch (error: any) {
+      console.error("[eduhub] ai request failed:", error);
+
+      const assistantMessage: Message = {
+        id: `${Date.now()}-assistant-error`,
+        role: "assistant",
+        text:
+          error?.message ||
+          "AI is not available right now. Please check your backend and try again.",
+      };
+
+      setMessages((prev) => [...prev, assistantMessage]);
+      scrollToBottom();
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handlePromptPress = (prompt: string) => {
     const seeded =
       prompt === "Explain simply"
-        ? "Explain database normalization simply."
+        ? "Explain database normalization simply with an example."
         : prompt === "Summarize topic"
-          ? "Summarize software design patterns."
+          ? "Summarize software design patterns in a student-friendly way."
           : prompt === "Generate MCQs"
-            ? "Generate MCQs from data structures."
-            : "Give me 5-mark questions from operating systems.";
+            ? "Generate 5 MCQs about data structures with answers."
+            : "Give me 5-mark questions and answers from operating systems.";
 
     setDraft(seeded);
   };
@@ -126,19 +135,16 @@ export default function AskAI({ navigation }: Props) {
 
       <KeyboardAvoidingView
         style={styles.screen}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+        behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <View
           style={[
             styles.contentWrap,
             { paddingHorizontal: isTablet ? 28 : 16 },
-          ]}
-        >
+          ]}>
           <View style={styles.headerRow}>
             <Pressable
               style={styles.backBtn}
-              onPress={() => navigation.goBack()}
-            >
+              onPress={() => navigation.goBack()}>
               <Ionicons name="arrow-back" size={20} color="#053668" />
             </Pressable>
 
@@ -149,8 +155,7 @@ export default function AskAI({ navigation }: Props) {
 
           <LinearGradient
             colors={["#053668", "#07427F"]}
-            style={styles.heroCard}
-          >
+            style={styles.heroCard}>
             <View style={styles.heroTopRow}>
               <View style={styles.heroIconWrap}>
                 <Ionicons name="sparkles-outline" size={24} color="#053668" />
@@ -158,7 +163,9 @@ export default function AskAI({ navigation }: Props) {
 
               <View style={styles.heroTextWrap}>
                 <Text style={styles.heroEyebrow}>EduHub Assistant</Text>
-                <Text style={styles.heroTitle}>Ask anything from your notes</Text>
+                <Text style={styles.heroTitle}>
+                  Ask anything from your notes
+                </Text>
                 <Text style={styles.heroSubtitle}>
                   Get explanations, summaries, revision help, and question ideas
                   in a student-friendly way.
@@ -167,17 +174,17 @@ export default function AskAI({ navigation }: Props) {
             </View>
           </LinearGradient>
 
-          <View style={styles.promptsWrap}>
+          {/* <View style={styles.promptsWrap}>
             {starterPrompts.map((prompt) => (
               <Pressable
                 key={prompt}
                 style={styles.promptChip}
                 onPress={() => handlePromptPress(prompt)}
-              >
+                disabled={loading}>
                 <Text style={styles.promptChipText}>{prompt}</Text>
               </Pressable>
             ))}
-          </View>
+          </View> */}
 
           <FlatList
             ref={listRef}
@@ -194,24 +201,21 @@ export default function AskAI({ navigation }: Props) {
                   style={[
                     styles.messageRow,
                     isUser ? styles.messageRowUser : styles.messageRowAssistant,
-                  ]}
-                >
+                  ]}>
                   <View
                     style={[
                       styles.messageBubble,
                       isUser
                         ? styles.messageBubbleUser
                         : styles.messageBubbleAssistant,
-                    ]}
-                  >
+                    ]}>
                     <Text
                       style={[
                         styles.messageRole,
                         isUser
                           ? styles.messageRoleUser
                           : styles.messageRoleAssistant,
-                      ]}
-                    >
+                      ]}>
                       {isUser ? "You" : "EduHub AI"}
                     </Text>
 
@@ -219,16 +223,25 @@ export default function AskAI({ navigation }: Props) {
                       style={[
                         styles.messageText,
                         isUser && styles.messageTextUser,
-                      ]}
-                    >
+                      ]}>
                       {item.text}
                     </Text>
                   </View>
                 </View>
               );
             }}
-            onContentSizeChange={() =>
-              listRef.current?.scrollToEnd({ animated: true })
+            onContentSizeChange={scrollToBottom}
+            ListFooterComponent={
+              loading ? (
+                <View style={styles.typingWrap}>
+                  <View style={styles.typingBubble}>
+                    <ActivityIndicator size="small" color="#053668" />
+                    <Text style={styles.typingText}>
+                      EduHub AI is thinking...
+                    </Text>
+                  </View>
+                </View>
+              ) : null
             }
           />
 
@@ -242,22 +255,24 @@ export default function AskAI({ navigation }: Props) {
                 style={styles.input}
                 multiline
                 textAlignVertical="center"
+                editable={!loading}
               />
 
               <Pressable
-                style={[
-                  styles.sendBtn,
-                  !canSend && styles.sendBtnDisabled,
-                ]}
+                style={[styles.sendBtn, !canSend && styles.sendBtnDisabled]}
                 onPress={handleSend}
-                disabled={!canSend}
-              >
-                <Ionicons name="send" size={18} color="#FFFFFF" />
+                disabled={!canSend}>
+                {loading ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Ionicons name="send" size={18} color="#FFFFFF" />
+                )}
               </Pressable>
             </View>
 
             <Text style={styles.footerHint}>
-              *Ai can make mistakes. Always double-check with your class materials and textbooks.
+              *AI can make mistakes. Always double-check with your class
+              materials and textbooks.
             </Text>
           </View>
         </View>
@@ -472,5 +487,29 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     color: "#98A2B3",
     textAlign: "center",
+  },
+  typingWrap: {
+    alignItems: "flex-start",
+    marginBottom: 10,
+  },
+
+  typingBubble: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 20,
+    borderBottomLeftRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    maxWidth: "82%",
+  },
+
+  typingText: {
+    fontSize: 13,
+    color: "#667085",
+    fontWeight: "600",
   },
 });

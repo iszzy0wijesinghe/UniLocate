@@ -3765,6 +3765,92 @@ app.delete("/eduhub/notes/:id", async (req: Request, res: Response) => {
   }
 });
 
+
+const EduHubAskAISchema = z.object({
+  message: z.string().min(2).max(4000),
+  messages: z
+    .array(
+      z.object({
+        role: z.union([z.literal("assistant"), z.literal("user")]),
+        text: z.string().min(1).max(4000),
+      }),
+    )
+    .max(20)
+    .optional()
+    .default([]),
+});
+
+app.post("/eduhub/ask-ai", async (req: Request, res: Response) => {
+  const parsed = EduHubAskAISchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Invalid AI request",
+      error: parsed.error.flatten(),
+    });
+  }
+
+  const data = parsed.data;
+
+  try {
+    const systemPrompt = `
+You are EduHub AI, a helpful academic assistant for university students.
+Your job is to:
+- explain concepts simply
+- summarize topics clearly
+- generate MCQs with answers when asked
+- generate 5-mark or essay-style questions when asked
+- be concise but useful
+- avoid making up fake references
+- answer in a student-friendly style
+`;
+
+    const ollamaMessages = [
+      { role: "system", content: systemPrompt.trim() },
+      ...data.messages.map((item) => ({
+        role: item.role === "assistant" ? "assistant" : "user",
+        content: item.text,
+      })),
+      { role: "user", content: data.message },
+    ];
+
+    const ollamaResponse = await fetch("http://127.0.0.1:11434/api/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "llama3.2:3b",
+        messages: ollamaMessages,
+        stream: false,
+      }),
+    });
+
+    if (!ollamaResponse.ok) {
+      const text = await ollamaResponse.text();
+      console.error("Ollama error:", text);
+
+      return res.status(503).json({
+        message: "AI service is unavailable right now.",
+      });
+    }
+
+    const result: any = await ollamaResponse.json();
+
+    return res.json({
+      answer:
+        result?.message?.content?.trim() ||
+        "I could not generate a response right now.",
+    });
+  } catch (e) {
+    console.error("DB/API error in POST /eduhub/ask-ai:", e);
+
+    return res.status(503).json({
+      message: "AI service is unavailable right now.",
+    });
+  }
+});
+
 const port = Number(process.env.PORT || 4000);
 const host = "0.0.0.0";
 

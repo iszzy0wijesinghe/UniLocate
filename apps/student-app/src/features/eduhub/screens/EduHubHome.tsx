@@ -1,7 +1,8 @@
 /** @format */
 
-import React from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   Dimensions,
   Image,
   Pressable,
@@ -15,8 +16,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import type { EduHubStackParamList } from "../../../navigation/EduHubNavigator";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
+import { useFocusEffect } from "@react-navigation/native";
+
+import type { EduHubStackParamList } from "../../../navigation/EduHubNavigator";
+import { getEduHubNotes } from "../services/eduhub.api";
+import type { EduHubNote } from "../types/eduhub";
+
 const { height } = Dimensions.get("window");
 
 type QuickAction = {
@@ -29,85 +35,83 @@ type QuickAction = {
   bg: string;
 };
 
-type NotePreview = {
-  id: string;
-  title: string;
-  module: string;
-  type: string;
-  updatedAt: string;
-};
-
 type Props = NativeStackScreenProps<EduHubStackParamList, "EduHubHome">;
 
 type QuickActionRoute = "NotesHome" | "AskAI" | "Flashcards" | "ExamMode";
 
-const quickActions: Array<QuickAction & { route: QuickActionRoute }> =
-  [
-    {
-      key: "upload-notes",
-      title: "Notes Library",
-      subtitle: "Browse shared notes, PDFs, images, and your uploads",
-      iconType: "ionicons",
-      iconName: "cloud-upload-outline",
-      tint: "#0F6CBD",
-      bg: "#EAF4FF",
-      route: "NotesHome",
-    },
-    {
-      key: "ask-ai",
-      title: "Ask AI",
-      subtitle: "Get simple explanations from your study content",
-      iconType: "ionicons",
-      iconName: "sparkles-outline",
-      tint: "#FF7100",
-      bg: "#FFF1E7",
-      route: "AskAI",
-    },
-    {
-      key: "flashcards",
-      title: "Flashcards",
-      subtitle: "Turn key concepts into quick revision cards",
-      iconType: "material",
-      iconName: "cards-outline",
-      tint: "#7C4DFF",
-      bg: "#F1ECFF",
-      route: "Flashcards",
-    },
-    {
-      key: "exam-mode",
-      title: "Exam Mode",
-      subtitle: "Focus on smart revision and weak-topic practice",
-      iconType: "material",
-      iconName: "brain",
-      tint: "#00A389",
-      bg: "#EAFBF7",
-      route: "ExamMode",
-    },
-  ];
-
-const recentNotes: NotePreview[] = [
+const quickActions: Array<QuickAction & { route: QuickActionRoute }> = [
   {
-    id: "1",
-    title: "Database Normalization - Week 05",
-    module: "IT3030",
-    type: "PDF",
-    updatedAt: "Updated 2h ago",
+    key: "notes-library",
+    title: "Notes Library",
+    subtitle: "Browse shared notes, PDFs, images, and your uploads",
+    iconType: "ionicons",
+    iconName: "library-outline",
+    tint: "#0F6CBD",
+    bg: "#EAF4FF",
+    route: "NotesHome",
   },
   {
-    id: "2",
-    title: "Software Engineering Design Patterns",
-    module: "SE2040",
-    type: "Slides",
-    updatedAt: "Updated yesterday",
+    key: "ask-ai",
+    title: "Ask AI",
+    subtitle: "Get simple explanations from your study content",
+    iconType: "ionicons",
+    iconName: "sparkles-outline",
+    tint: "#FF7100",
+    bg: "#FFF1E7",
+    route: "AskAI",
   },
   {
-    id: "3",
-    title: "Data Structures Quick Revision Pack",
-    module: "CS2020",
-    type: "Notes",
-    updatedAt: "Updated 3 days ago",
+    key: "flashcards",
+    title: "Flashcards",
+    subtitle: "Turn key concepts into quick revision cards",
+    iconType: "material",
+    iconName: "cards-outline",
+    tint: "#7C4DFF",
+    bg: "#F1ECFF",
+    route: "Flashcards",
+  },
+  {
+    key: "exam-mode",
+    title: "Exam Mode",
+    subtitle: "Focus on smart revision and weak-topic practice",
+    iconType: "material",
+    iconName: "brain",
+    tint: "#00A389",
+    bg: "#EAFBF7",
+    route: "ExamMode",
   },
 ];
+
+function formatRelativeTime(value: string) {
+  const now = Date.now();
+  const then = new Date(value).getTime();
+  const diffMs = now - then;
+
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+
+  if (diffMs < hour) {
+    const mins = Math.max(1, Math.floor(diffMs / minute));
+    return `Updated ${mins}m ago`;
+  }
+
+  if (diffMs < day) {
+    const hours = Math.max(1, Math.floor(diffMs / hour));
+    return `Updated ${hours}h ago`;
+  }
+
+  const days = Math.max(1, Math.floor(diffMs / day));
+  if (days === 1) return "Updated yesterday";
+  return `Updated ${days} days ago`;
+}
+
+function getDisplayNoteType(noteType: string) {
+  if (noteType === "Text") return "TEXT";
+  if (noteType === "PDF") return "PDF";
+  if (noteType === "Image") return "IMAGE";
+  return noteType.toUpperCase();
+}
 
 function QuickActionCard({
   item,
@@ -161,33 +165,42 @@ function NoteCard({
   item,
   onPress,
 }: {
-  item: NotePreview;
+  item: EduHubNote;
   onPress?: () => void;
 }) {
   return (
     <Pressable style={styles.noteCard} onPress={onPress}>
       <View style={styles.noteTopRow}>
         <View style={styles.noteBadge}>
-          <Text style={styles.noteBadgeText}>{item.type}</Text>
+          <Text style={styles.noteBadgeText}>
+            {getDisplayNoteType(item.noteType)}
+          </Text>
         </View>
 
-        <Text style={styles.noteUpdatedAt}>{item.updatedAt}</Text>
+        <Text style={styles.noteUpdatedAt}>
+          {formatRelativeTime(item.updatedAt)}
+        </Text>
       </View>
 
       <Text style={styles.noteTitle}>{item.title}</Text>
       <Text style={styles.noteModule}>{item.module}</Text>
+      <Text style={styles.noteUploader}>By {item.uploadedByUsername}</Text>
 
       <View style={styles.noteBottomRow}>
-        <Pressable style={styles.noteMiniButton}>
+        <Pressable style={styles.noteMiniButton} onPress={onPress}>
           <Text style={styles.noteMiniButtonText}>Open</Text>
         </Pressable>
 
-        <Pressable style={[styles.noteMiniButton, styles.noteMiniButtonAccent]}>
+        <Pressable
+          style={[styles.noteMiniButton, styles.noteMiniButtonAccent]}
+          onPress={() => {}}
+        >
           <Text
             style={[
               styles.noteMiniButtonText,
               styles.noteMiniButtonTextAccent,
-            ]}>
+            ]}
+          >
             Summarize
           </Text>
         </Pressable>
@@ -200,6 +213,10 @@ export default function EduHubHome({ navigation }: Props) {
   const { width } = useWindowDimensions();
   const tabBarHeight = useBottomTabBarHeight();
 
+  const [notes, setNotes] = useState<EduHubNote[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
   const isTablet = width >= 768;
   const horizontalPadding = isTablet ? 28 : 16;
   const gridGap = 12;
@@ -207,6 +224,46 @@ export default function EduHubHome({ navigation }: Props) {
   const actionCardWidth = isTablet
     ? (width - horizontalPadding * 2 - gridGap * 3) / 4
     : (width - horizontalPadding * 2 - gridGap) / 2;
+
+  const loadNotes = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      const response = await getEduHubNotes();
+      setNotes(Array.isArray(response) ? response : []);
+    } catch (err: any) {
+      console.error("[eduhub] failed to load home notes:", err);
+      setError(err?.message || "Could not load EduHub notes.");
+      setNotes([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadNotes();
+    }, [loadNotes]),
+  );
+
+  const recentNotes = useMemo(() => notes.slice(0, 3), [notes]);
+  const totalNotes = notes.length;
+  const textNotesCount = useMemo(
+    () => notes.filter((item) => item.noteType === "Text").length,
+    [notes],
+  );
+  const fileNotesCount = useMemo(
+    () =>
+      notes.filter(
+        (item) => item.noteType === "PDF" || item.noteType === "Image",
+      ).length,
+    [notes],
+  );
+
+  const handleOpenNote = (noteId: string) => {
+    navigation.navigate("NoteDetails", { noteId });
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
@@ -221,13 +278,15 @@ export default function EduHubHome({ navigation }: Props) {
           {
             paddingBottom: tabBarHeight + 10,
           },
-        ]}>
+        ]}
+      >
         <ScrollView
           contentContainerStyle={[
             styles.contentContainer,
             { paddingHorizontal: horizontalPadding },
           ]}
-          showsVerticalScrollIndicator={false}>
+          showsVerticalScrollIndicator={false}
+        >
           <View style={styles.logoWrap}>
             <Image
               source={require("../../../assets/images/UniLocateLogo.png")}
@@ -240,7 +299,8 @@ export default function EduHubHome({ navigation }: Props) {
             colors={["#053668", "#07427F", "#053668"]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
-            style={styles.heroCard}>
+            style={styles.heroCard}
+          >
             <View style={styles.heroTopRow}>
               <View style={styles.heroIconWrap}>
                 <Ionicons name="school-outline" size={28} color="#053668" />
@@ -262,36 +322,38 @@ export default function EduHubHome({ navigation }: Props) {
 
             <View style={styles.heroMiniStatsRow}>
               <View style={styles.heroMiniStat}>
-                <Text style={styles.heroMiniStatValue}>12</Text>
+                <Text style={styles.heroMiniStatValue}>{totalNotes}</Text>
                 <Text style={styles.heroMiniStatLabel}>Notes</Text>
               </View>
 
               <View style={styles.heroMiniDivider} />
 
               <View style={styles.heroMiniStat}>
-                <Text style={styles.heroMiniStatValue}>84</Text>
-                <Text style={styles.heroMiniStatLabel}>Flashcards</Text>
+                <Text style={styles.heroMiniStatValue}>{textNotesCount}</Text>
+                <Text style={styles.heroMiniStatLabel}>Text notes</Text>
               </View>
 
               <View style={styles.heroMiniDivider} />
 
               <View style={styles.heroMiniStat}>
-                <Text style={styles.heroMiniStatValue}>4d</Text>
-                <Text style={styles.heroMiniStatLabel}>Next exam</Text>
+                <Text style={styles.heroMiniStatValue}>{fileNotesCount}</Text>
+                <Text style={styles.heroMiniStatLabel}>PDF/Image</Text>
               </View>
             </View>
 
             <View style={styles.heroButtonsRow}>
               <Pressable
                 style={[styles.heroButton, styles.heroPrimaryButton]}
-                onPress={() => navigation.navigate("NotesHome")}>
+                onPress={() => navigation.navigate("NotesHome")}
+              >
                 <Ionicons name="rocket-outline" size={16} color="#FFFFFF" />
                 <Text style={styles.heroPrimaryButtonText}>Start Learning</Text>
               </Pressable>
 
               <Pressable
                 style={[styles.heroButton, styles.heroSecondaryButton]}
-                onPress={() => navigation.navigate("AskAI")}>
+                onPress={() => navigation.navigate("AskAI")}
+              >
                 <Ionicons name="sparkles-outline" size={16} color="#053668" />
                 <Text style={styles.heroSecondaryButtonText}>Ask AI</Text>
               </Pressable>
@@ -299,9 +361,13 @@ export default function EduHubHome({ navigation }: Props) {
           </LinearGradient>
 
           <View style={styles.statsRow}>
-            <StatCard value="12" label="Saved notes" />
-            <StatCard value="84" label="Flashcards" />
-            <StatCard value="4d" label="Next exam" accent />
+            <StatCard value={String(totalNotes)} label="Library notes" />
+            <StatCard value={String(textNotesCount)} label="Text notes" />
+            <StatCard
+              value={String(fileNotesCount)}
+              label="PDF & images"
+              accent
+            />
           </View>
 
           <View style={styles.sectionHeader}>
@@ -321,7 +387,8 @@ export default function EduHubHome({ navigation }: Props) {
                 style={{
                   width: actionCardWidth,
                   marginBottom: gridGap,
-                }}>
+                }}
+              >
                 <QuickActionCard
                   item={item}
                   onPress={() => navigation.navigate(item.route)}
@@ -340,35 +407,71 @@ export default function EduHubHome({ navigation }: Props) {
             <Text style={styles.sectionMeta}>Recent</Text>
           </View>
 
-          <View style={styles.notesSection}>
-            {recentNotes.map((item) => (
-              <NoteCard
-                key={item.id}
-                item={item}
-                onPress={() => navigation.navigate("NotesHome")}
+          {loading ? (
+            <View style={styles.loadingCard}>
+              <ActivityIndicator size="small" color="#053668" />
+              <Text style={styles.loadingText}>Loading live EduHub notes...</Text>
+            </View>
+          ) : error ? (
+            <View style={styles.errorCard}>
+              <Text style={styles.errorTitle}>Could not load notes</Text>
+              <Text style={styles.errorText}>{error}</Text>
+
+              <Pressable style={styles.retryBtn} onPress={loadNotes}>
+                <Text style={styles.retryBtnText}>Try again</Text>
+              </Pressable>
+            </View>
+          ) : recentNotes.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Ionicons
+                name="document-text-outline"
+                size={28}
+                color="#98A2B3"
               />
-            ))}
-          </View>
+              <Text style={styles.emptyTitle}>No notes yet</Text>
+              <Text style={styles.emptyText}>
+                Your shared Notes Library is empty right now. Add the first note
+                to start building EduHub.
+              </Text>
+
+              <Pressable
+                style={styles.retryBtn}
+                onPress={() => navigation.navigate("NotesHome")}
+              >
+                <Text style={styles.retryBtnText}>Open Notes Library</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.notesSection}>
+              {recentNotes.map((item) => (
+                <NoteCard
+                  key={item.id}
+                  item={item}
+                  onPress={() => handleOpenNote(item.id)}
+                />
+              ))}
+            </View>
+          )}
 
           <View style={styles.sectionHeader}>
             <View>
               <Text style={styles.sectionTitle}>Smart study suggestion</Text>
               <Text style={styles.sectionSubtitle}>
-                Based on your live campus context
+                Based on your current EduHub activity
               </Text>
             </View>
-            <Text style={styles.sectionMeta}>Campus-aware</Text>
+            <Text style={styles.sectionMeta}>Adaptive</Text>
           </View>
 
           <View style={styles.studySuggestionCard}>
             <View style={styles.studySuggestionIconWrap}>
-              <Ionicons name="location-outline" size={22} color="#FF7100" />
+              <Ionicons name="bulb-outline" size={22} color="#FF7100" />
             </View>
 
             <View style={styles.studySuggestionTextWrap}>
               <View style={styles.studySuggestionHeaderRow}>
                 <Text style={styles.studySuggestionTitle}>
-                  Best quiet study spot right now
+                  Best next step right now
                 </Text>
 
                 <View style={styles.recommendChip}>
@@ -377,16 +480,21 @@ export default function EduHubHome({ navigation }: Props) {
               </View>
 
               <Text style={styles.studySuggestionSubtitle}>
-                Library 2nd Floor looks calmer than the canteen area. Great for
-                focused revision.
+                {totalNotes === 0
+                  ? "Start by adding your first note to EduHub. Once your library grows, AI summaries and smart revision will feel much more useful."
+                  : totalNotes < 3
+                    ? "Your library is growing. Add a few more notes or PDFs so Ask AI can help you study with better context."
+                    : "You already have a useful note base. Open Ask AI next and start getting explanations from your stored study material."}
               </Text>
 
               <View style={styles.studySuggestionMetaRow}>
                 <View style={styles.studyChip}>
-                  <Text style={styles.studyChipText}>Low crowd</Text>
+                  <Text style={styles.studyChipText}>{totalNotes} in library</Text>
                 </View>
                 <View style={styles.studyChip}>
-                  <Text style={styles.studyChipText}>Near you</Text>
+                  <Text style={styles.studyChipText}>
+                    {textNotesCount} text notes
+                  </Text>
                 </View>
               </View>
             </View>
@@ -396,7 +504,8 @@ export default function EduHubHome({ navigation }: Props) {
             colors={["#FFF7ED", "#FFF1E7"]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
-            style={styles.examModeCard}>
+            style={styles.examModeCard}
+          >
             <View style={styles.examModeTopRow}>
               <View>
                 <Text style={styles.examModeEyebrow}>Exam mode</Text>
@@ -415,7 +524,8 @@ export default function EduHubHome({ navigation }: Props) {
 
             <Pressable
               style={styles.examModeButton}
-              onPress={() => navigation.navigate("ExamMode")}>
+              onPress={() => navigation.navigate("ExamMode")}
+            >
               <Text style={styles.examModeButtonText}>Preview roadmap</Text>
             </Pressable>
           </LinearGradient>
@@ -889,5 +999,89 @@ const styles = StyleSheet.create({
 
   screen: {
     flex: 1,
+  },
+
+  loadingCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    padding: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  loadingText: {
+    marginTop: 10,
+    fontSize: 13,
+    color: "#667085",
+    fontWeight: "600",
+  },
+
+  errorCard: {
+    backgroundColor: "#FFF7ED",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#FED7AA",
+    padding: 18,
+  },
+
+  errorTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#9A3412",
+  },
+
+  errorText: {
+    marginTop: 6,
+    fontSize: 13,
+    lineHeight: 19,
+    color: "#9A3412",
+  },
+
+  retryBtn: {
+    alignSelf: "flex-start",
+    marginTop: 12,
+    backgroundColor: "#053668",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+
+  retryBtnText: {
+    color: "#FFFFFF",
+    fontSize: 12.5,
+    fontWeight: "800",
+  },
+
+  emptyCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    padding: 20,
+    alignItems: "center",
+  },
+
+  emptyTitle: {
+    marginTop: 10,
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#111827",
+  },
+
+  emptyText: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 20,
+    color: "#667085",
+    textAlign: "center",
+  },
+
+  noteUploader: {
+    marginTop: 6,
+    fontSize: 12.5,
+    color: "#98A2B3",
+    fontWeight: "600",
   },
 });

@@ -141,8 +141,42 @@ export async function deleteEduHubNote(noteId: string): Promise<{
 
 export function getEduHubFileUrl(fileUrl?: string | null) {
   if (!fileUrl) return null;
+
   if (fileUrl.startsWith("http://") || fileUrl.startsWith("https://")) {
     return fileUrl;
   }
-  return `${API_BASE_URL}${fileUrl}`;
+
+  const normalizedPath = fileUrl.startsWith("/") ? fileUrl : `/${fileUrl}`;
+  return `${API_BASE_URL}${normalizedPath}`;
+}
+
+export async function askEduHubAI(input: {
+  message: string;
+  messages: Array<{
+    role: "assistant" | "user";
+    text: string;
+  }>;
+}): Promise<{ answer: string }> {
+  const response = await fetch(`${API_BASE_URL}/eduhub/ask-ai`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) {
+    let message = "Failed to get AI response";
+
+    try {
+      const errorBody = await response.json();
+      message = errorBody?.message || message;
+    } catch {
+      // ignore
+    }
+
+    throw new Error(message);
+  }
+
+  return (await response.json()) as { answer: string };
 }
