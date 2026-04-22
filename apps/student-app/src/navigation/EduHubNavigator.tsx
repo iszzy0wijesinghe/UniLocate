@@ -7,6 +7,7 @@ import NoteDetails from "../features/eduhub/screens/NoteDetails";
 import AskAI from "../features/eduhub/screens/AskAI";
 import Flashcards from "../features/eduhub/screens/Flashcards";
 import ExamMode from "../features/eduhub/screens/ExamMode";
+import AddExamEntry  from "../features/eduhub/screens/AddExamEntry";
 
 export type EduHubStackParamList = {
   EduHubHome: undefined;
@@ -16,6 +17,7 @@ export type EduHubStackParamList = {
   AskAI: undefined;
   Flashcards: undefined;
   ExamMode: undefined;
+  AddExamEntry: undefined;
 };
 
 const Stack = createNativeStackNavigator<EduHubStackParamList>();
@@ -33,6 +35,7 @@ export default function EduHubNavigator() {
       <Stack.Screen name="AskAI" component={AskAI} />
       <Stack.Screen name="Flashcards" component={Flashcards} />
       <Stack.Screen name="ExamMode" component={ExamMode} />
+      <Stack.Screen name="AddExamEntry" component={AddExamEntry} />
     </Stack.Navigator>
   );
 }

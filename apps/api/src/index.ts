@@ -3502,6 +3502,153 @@ app.post(
   },
 );
 
+// 🔹 EDUHUB EXAMS
+
+const EduHubExamTypeSchema = z.union([
+  z.literal("Mock Exam"),
+  z.literal("Mid Exam"),
+  z.literal("Spot Test"),
+  z.literal("Practical Test"),
+  z.literal("Viva"),
+  z.literal("Presentation"),
+  z.literal("Final Exam"),
+  z.literal("Repeat Exam"),
+]);
+
+const EduHubCreateExamSchema = z.object({
+  semester: z.string().min(2).max(100),
+  examType: EduHubExamTypeSchema,
+  moduleCode: z.string().min(2).max(50),
+  moduleName: z.string().min(2).max(150),
+  examDate: z.string().min(1),
+  startTime: z.string().min(1),
+  endTime: z.string().min(1),
+  sessionNumber: z.string().max(50).optional().nullable(),
+  seatNumber: z.string().max(50).optional().nullable(),
+  venue: z.string().max(150).optional().nullable(),
+  notes: z.string().max(2000).optional().nullable(),
+  uploadedByUserId: z.string().min(1),
+  uploadedByUsername: z.string().min(1).max(120),
+});
+
+function parseExamDateTimeLocal(dateValue: string, timeValue: string) {
+  const safeDate = String(dateValue || "").slice(0, 10);
+  const safeTime = String(timeValue || "").slice(0, 5);
+
+  if (!safeDate || !safeTime) return null;
+
+  const [year, month, day] = safeDate.split("-").map(Number);
+  const [hour, minute] = safeTime.split(":").map(Number);
+
+  if (!year || !month || !day || Number.isNaN(hour) || Number.isNaN(minute)) {
+    return null;
+  }
+
+  const value = new Date(year, month - 1, day, hour, minute, 0, 0);
+
+  if (Number.isNaN(value.getTime())) {
+    return null;
+  }
+
+  return value;
+}
+
+function getEduHubExamLifecycleMeta(
+  examDate: string,
+  startTime: string,
+  endTime: string,
+) {
+  const now = new Date();
+  const startAt = parseExamDateTimeLocal(examDate, startTime);
+  const endAt = parseExamDateTimeLocal(examDate, endTime);
+
+  if (!startAt || !endAt) {
+    return {
+      isUpcoming: false,
+      isOngoing: false,
+      isGraceVisible: false,
+      shouldAutoRemove: false,
+      removeAfterAt: null as string | null,
+    };
+  }
+
+  const removeAfterAt = new Date(endAt.getTime() + 24 * 60 * 60 * 1000);
+
+  return {
+    isUpcoming: startAt.getTime() > now.getTime(),
+    isOngoing:
+      startAt.getTime() <= now.getTime() && endAt.getTime() >= now.getTime(),
+    isGraceVisible:
+      endAt.getTime() < now.getTime() &&
+      removeAfterAt.getTime() > now.getTime(),
+    shouldAutoRemove: removeAfterAt.getTime() <= now.getTime(),
+    removeAfterAt: removeAfterAt.toISOString(),
+  };
+}
+
+function mapEduHubExamRow(row: any) {
+  const lifecycle = getEduHubExamLifecycleMeta(
+    row.exam_date,
+    row.start_time,
+    row.end_time,
+  );
+
+  return {
+    id: row.id,
+    semester: row.semester,
+    examType: row.exam_type,
+    moduleCode: row.module_code,
+    moduleName: row.module_name,
+    examDate: row.exam_date,
+    startTime: row.start_time,
+    endTime: row.end_time,
+    sessionNumber: row.session_number,
+    seatNumber: row.seat_number,
+    venue: row.venue,
+    notes: row.notes,
+    uploadedByUserId: row.uploaded_by_user_id,
+    uploadedByUsername: row.uploaded_by_username,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    isUpcoming: lifecycle.isUpcoming,
+    isOngoing: lifecycle.isOngoing,
+    isGraceVisible: lifecycle.isGraceVisible,
+    shouldAutoRemove: lifecycle.shouldAutoRemove,
+    removeAfterAt: lifecycle.removeAfterAt,
+  };
+}
+
+async function resolveEduHubUserId(input: {
+  uploadedByUserId?: string;
+  uploadedByUsername?: string;
+}) {
+  const uploadedByUserId = String(input.uploadedByUserId ?? "").trim();
+  const uploadedByUsername = String(input.uploadedByUsername ?? "").trim();
+
+  if (uploadedByUserId) {
+    return uploadedByUserId;
+  }
+
+  if (!uploadedByUsername) {
+    return null;
+  }
+
+  const { rows } = await pool.query(
+    `
+    SELECT id
+    FROM users
+    WHERE LOWER(username) = LOWER($1)
+    LIMIT 1
+    `,
+    [uploadedByUsername],
+  );
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return String(rows[0].id);
+}
 
 
 // 🔹 EDUHUB NOTES
@@ -3768,6 +3915,240 @@ app.delete("/eduhub/notes/:id", async (req: Request, res: Response) => {
   }
 });
 
+//
+// 🔹 EDUHUB EXAMS
+//
+
+app.post("/eduhub/exams", async (req: Request, res: Response) => {
+  const parsed = EduHubCreateExamSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Invalid exam entry data",
+      error: parsed.error.flatten(),
+    });
+  }
+
+  const data = parsed.data;
+
+  try {
+    const result = await pool.query(
+      `
+      INSERT INTO eduhub_exam_entries (
+        id,
+        semester,
+        exam_type,
+        module_code,
+        module_name,
+        exam_date,
+        start_time,
+        end_time,
+        session_number,
+        seat_number,
+        venue,
+        notes,
+        uploaded_by_user_id,
+        uploaded_by_username,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),NOW()
+      )
+      RETURNING *
+      `,
+      [
+        crypto.randomUUID(),
+        data.semester.trim(),
+        data.examType,
+        data.moduleCode.trim(),
+        data.moduleName.trim(),
+        data.examDate,
+        data.startTime,
+        data.endTime,
+        data.sessionNumber?.trim() || null,
+        data.seatNumber?.trim() || null,
+        data.venue?.trim() || null,
+        data.notes?.trim() || null,
+        data.uploadedByUserId,
+        data.uploadedByUsername.trim(),
+      ],
+    );
+
+    return res.status(201).json(mapEduHubExamRow(result.rows[0]));
+  } catch (e) {
+    console.error("DB error in POST /eduhub/exams:", e);
+    return res.status(503).json({
+      message: "Failed to create exam entry",
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.get("/eduhub/exams", async (req: Request, res: Response) => {
+  const semester = String(req.query.semester ?? "").trim();
+  const examType = String(req.query.examType ?? "").trim();
+  const uploadedByUserId = String(req.query.uploadedByUserId ?? "").trim();
+  const uploadedByUsername = String(req.query.uploadedByUsername ?? "").trim();
+
+  try {
+    const resolvedUserId = await resolveEduHubUserId({
+      uploadedByUserId,
+      uploadedByUsername,
+    });
+
+    if (!resolvedUserId) {
+      return res.status(400).json({
+        message: "uploadedByUserId or uploadedByUsername is required",
+      });
+    }
+
+    const { rows } = await pool.query(
+      `
+      SELECT *
+      FROM eduhub_exam_entries
+      WHERE uploaded_by_user_id = $1
+        AND ($2 = '' OR semester = $2)
+        AND ($3 = '' OR exam_type = $3)
+      ORDER BY exam_date ASC, start_time ASC, created_at DESC
+      `,
+      [resolvedUserId, semester, examType],
+    );
+
+    const visibleRows = rows
+      .map(mapEduHubExamRow)
+      .filter((item) => !item.shouldAutoRemove);
+
+    return res.json(visibleRows);
+  } catch (e) {
+    console.error("DB error in GET /eduhub/exams:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.get("/eduhub/exams/:id", async (req: Request, res: Response) => {
+  const uploadedByUserId = String(req.query.uploadedByUserId ?? "").trim();
+  const uploadedByUsername = String(req.query.uploadedByUsername ?? "").trim();
+
+  try {
+    const resolvedUserId = await resolveEduHubUserId({
+      uploadedByUserId,
+      uploadedByUsername,
+    });
+
+    if (!resolvedUserId) {
+      return res.status(400).json({
+        message: "uploadedByUserId or uploadedByUsername is required",
+      });
+    }
+
+    const { rows } = await pool.query(
+      `
+      SELECT *
+      FROM eduhub_exam_entries
+      WHERE id = $1
+        AND uploaded_by_user_id = $2
+      LIMIT 1
+      `,
+      [req.params.id, resolvedUserId],
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        message: "Exam entry not found",
+      });
+    }
+
+    const mapped = mapEduHubExamRow(rows[0]);
+
+    if (mapped.shouldAutoRemove) {
+      return res.status(404).json({
+        message: "Exam entry not found",
+      });
+    }
+
+    return res.json(mapped);
+  } catch (e) {
+    console.error("DB error in GET /eduhub/exams/:id:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.delete("/eduhub/exams/:id", async (req: Request, res: Response) => {
+  const uploadedByUserId = String(req.query.uploadedByUserId ?? "").trim();
+  const uploadedByUsername = String(req.query.uploadedByUsername ?? "").trim();
+
+  try {
+    const resolvedUserId = await resolveEduHubUserId({
+      uploadedByUserId,
+      uploadedByUsername,
+    });
+
+    if (!resolvedUserId) {
+      return res.status(400).json({
+        message: "uploadedByUserId or uploadedByUsername is required",
+      });
+    }
+
+    const result = await pool.query(
+      `
+      DELETE FROM eduhub_exam_entries
+      WHERE id = $1
+        AND uploaded_by_user_id = $2
+      RETURNING id
+      `,
+      [req.params.id, resolvedUserId],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        message: "Exam entry not found",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      deletedId: result.rows[0].id,
+    });
+  } catch (e) {
+    console.error("DB error in DELETE /eduhub/exams/:id:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+
+//
+// 🔹 EDUHUB FLASHCARDS
+//
+
+const EduHubCreateFlashcardSetSchema = z.object({
+  moduleCode: z.string().min(2).max(50),
+  moduleName: z.string().min(2).max(150),
+  examEntryId: z.string().uuid().optional().nullable(),
+  createdByUserId: z.string().min(1),
+  createdByUsername: z.string().min(1).max(120),
+});
+
+function mapEduHubFlashcardSetRow(row: any) {
+  return {
+    id: row.id,
+    moduleCode: row.module_code,
+    moduleName: row.module_name,
+    examEntryId: row.exam_entry_id,
+    createdByUserId: row.created_by_user_id,
+    createdByUsername: row.created_by_username,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+
 
 const EduHubAskAISchema = z.object({
   message: z.string().min(2).max(4000),
@@ -3853,12 +4234,6 @@ Your job is to:
     });
   }
 });
-
-
-
-
-
-
 
 const port = Number(process.env.PORT || 4000);
 const host = "0.0.0.0";
