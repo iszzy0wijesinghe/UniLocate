@@ -1,9 +1,11 @@
 /** @format */
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useMemo, useRef, useState, useEffect } from "react";
 import {
   ActivityIndicator,
+  Animated,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -40,6 +42,9 @@ export default function AskAI({ navigation }: Props) {
   const isTablet = width >= 768;
   const listRef = useRef<FlatList<Message>>(null);
 
+  const composerTranslateY = useRef(new Animated.Value(0)).current;
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
@@ -49,6 +54,42 @@ export default function AskAI({ navigation }: Props) {
       text: "Hi, I’m your EduHub study assistant. Ask me to explain a concept, summarize a topic, create MCQs, or prepare 5-mark answers.",
     },
   ]);
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const showSub = Keyboard.addListener(showEvent, () => {
+      setKeyboardVisible(true);
+
+      Animated.timing(composerTranslateY, {
+        toValue: -8,
+        duration: 220,
+        useNativeDriver: true,
+      }).start();
+
+      setTimeout(() => {
+        listRef.current?.scrollToEnd({ animated: true });
+      }, 120);
+    });
+
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardVisible(false);
+
+      Animated.timing(composerTranslateY, {
+        toValue: 0,
+        duration: 220,
+        useNativeDriver: true,
+      }).start();
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [composerTranslateY]);
 
   const canSend = useMemo(
     () => draft.trim().length > 0 && !loading,
@@ -135,7 +176,9 @@ export default function AskAI({ navigation }: Props) {
 
       <KeyboardAvoidingView
         style={styles.screen}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 80 : 0}
+      >
         <View
           style={[
             styles.contentWrap,
@@ -245,7 +288,12 @@ export default function AskAI({ navigation }: Props) {
             }
           />
 
-          <View style={styles.composerWrap}>
+          <Animated.View
+            style={[
+              styles.composerWrap,
+              keyboardVisible && styles.composerWrapKeyboardOpen,
+              { transform: [{ translateY: composerTranslateY }] },
+            ]}>
             <View style={styles.inputRow}>
               <TextInput
                 value={draft}
@@ -254,8 +302,9 @@ export default function AskAI({ navigation }: Props) {
                 placeholderTextColor="#98A2B3"
                 style={styles.input}
                 multiline
-                textAlignVertical="center"
+                textAlignVertical="top"
                 editable={!loading}
+                onFocus={scrollToBottom}
               />
 
               <Pressable
@@ -274,7 +323,7 @@ export default function AskAI({ navigation }: Props) {
               *AI can make mistakes. Always double-check with your class
               materials and textbooks.
             </Text>
-          </View>
+          </Animated.View>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -389,7 +438,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   listContent: {
-    paddingBottom: 12,
+    paddingBottom: 140,
   },
 
   messageRow: {
@@ -442,16 +491,22 @@ const styles = StyleSheet.create({
   },
 
   composerWrap: {
-    marginTop: 10,
-    marginBottom: 60,
+    marginTop: 0,
+    marginBottom: 20,
     backgroundColor: "#FFFFFF",
-    borderRadius: 22,
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: "#E5E7EB",
     paddingHorizontal: 10,
     paddingTop: 10,
     paddingBottom: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
   },
+  
   inputRow: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -459,16 +514,17 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    minHeight: 46,
-    maxHeight: 110,
+    minHeight: 48,
+    maxHeight: 120,
     borderRadius: 18,
     backgroundColor: "#F8FAFC",
     borderWidth: 1,
     borderColor: "#E5E7EB",
     paddingHorizontal: 14,
-    paddingTop: 11,
-    paddingBottom: 11,
+    paddingTop: 12,
+    paddingBottom: 12,
     fontSize: 14,
+    lineHeight: 20,
     color: "#111827",
   },
   sendBtn: {
@@ -511,5 +567,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#667085",
     fontWeight: "600",
+  },
+  composerWrapKeyboardOpen: {
+    borderColor: "#D6E4F0",
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 10,
   },
 });

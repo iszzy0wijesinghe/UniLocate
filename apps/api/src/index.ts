@@ -3650,7 +3650,6 @@ async function resolveEduHubUserId(input: {
   return String(rows[0].id);
 }
 
-
 // 🔹 EDUHUB NOTES
 const EduHubCreateTextNoteSchema = z.object({
   title: z.string().min(3).max(200),
@@ -4122,7 +4121,6 @@ app.delete("/eduhub/exams/:id", async (req: Request, res: Response) => {
   }
 });
 
-
 //
 // 🔹 EDUHUB FLASHCARDS
 //
@@ -4133,6 +4131,15 @@ const EduHubCreateFlashcardSetSchema = z.object({
   examEntryId: z.string().uuid().optional().nullable(),
   createdByUserId: z.string().min(1),
   createdByUsername: z.string().min(1).max(120),
+});
+
+const EduHubGenerateFlashcardsSchema = z.object({
+  moduleCode: z.string().min(2).max(50),
+  moduleName: z.string().min(2).max(150),
+  examEntryId: z.string().uuid().optional().nullable(),
+  createdByUserId: z.string().min(1),
+  createdByUsername: z.string().min(1).max(120),
+  requestedCount: z.number().int().min(5).max(30).optional().default(15),
 });
 
 function mapEduHubFlashcardSetRow(row: any) {
@@ -4148,7 +4155,375 @@ function mapEduHubFlashcardSetRow(row: any) {
   };
 }
 
+async function getEduHubFlashcardSourceText(input: {
+  moduleCode: string;
+  moduleName: string;
+  createdByUserId: string;
+  examEntryId?: string | null;
+}) {
+  const chunks: string[] = [];
 
+  chunks.push(`Module Code: ${input.moduleCode}`);
+  chunks.push(`Module Name: ${input.moduleName}`);
+
+  if (input.examEntryId) {
+    const examResult = await pool.query(
+      `
+      SELECT module_code, module_name, notes, exam_type, semester
+      FROM eduhub_exam_entries
+      WHERE id = $1
+        AND uploaded_by_user_id = $2
+      LIMIT 1
+      `,
+      [input.examEntryId, input.createdByUserId],
+    );
+
+    if (examResult.rows.length > 0) {
+      const exam = examResult.rows[0];
+      chunks.push(`Exam Type: ${exam.exam_type ?? ""}`);
+      chunks.push(`Semester: ${exam.semester ?? ""}`);
+      chunks.push(`Exam Notes: ${exam.notes ?? ""}`);
+    }
+  }
+
+  const notesResult = await pool.query(
+    `
+    SELECT title, module, note_type, content_text, file_name
+    FROM eduhub_notes
+    WHERE uploaded_by_user_id = $1
+      AND (
+        LOWER(module) = LOWER($2)
+        OR LOWER(module) = LOWER($3)
+        OR title ILIKE '%' || $2 || '%'
+        OR title ILIKE '%' || $3 || '%'
+        OR content_text ILIKE '%' || $2 || '%'
+        OR content_text ILIKE '%' || $3 || '%'
+      )
+    ORDER BY updated_at DESC, created_at DESC
+    LIMIT 10
+    `,
+    [input.createdByUserId, input.moduleCode, input.moduleName],
+  );
+
+  for (const row of notesResult.rows) {
+    chunks.push(
+      `
+Note Title: ${row.title ?? ""}
+Note Module: ${row.module ?? ""}
+Note Type: ${row.note_type ?? ""}
+Text Content: ${row.content_text ?? ""}
+File Name: ${row.file_name ?? ""}
+    `.trim(),
+    );
+  }
+
+  return chunks.join("\n\n").trim();
+}
+
+function extractJsonArrayFromText(raw: string) {
+  const start = raw.indexOf("[");
+  const end = raw.lastIndexOf("]");
+
+  if (start === -1 || end === -1 || end < start) {
+    return null;
+  }
+
+  const candidate = raw.slice(start, end + 1);
+
+  try {
+    const parsed = JSON.parse(candidate);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+const EduHubGeneratedFlashcardSchema = z.object({
+  question: z.string().min(5).max(300),
+  answer: z.string().min(5).max(500),
+});
+
+const EduHubGeneratedFlashcardsArraySchema = z
+  .array(EduHubGeneratedFlashcardSchema)
+  .min(5)
+  .max(30);
+
+
+  
+app.post(
+  "/eduhub/flashcard-sets/generate",
+  async (req: Request, res: Response) => {
+    const parsed = EduHubGenerateFlashcardsSchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Invalid flashcard generation data",
+        error: parsed.error.flatten(),
+      });
+    }
+
+    const data = parsed.data;
+
+    try {
+      const sourceText = await getEduHubFlashcardSourceText({
+        moduleCode: data.moduleCode.trim(),
+        moduleName: data.moduleName.trim(),
+        createdByUserId: data.createdByUserId.trim(),
+        examEntryId: data.examEntryId ?? null,
+      });
+
+      const prompt = `
+You are generating revision flashcards for a university student.
+
+Create exactly ${data.requestedCount} flashcards.
+
+Rules:
+- Return ONLY a JSON array
+- No markdown
+- No explanation
+- Each item must have:
+  - question
+  - answer
+- Keep questions clear and exam-focused
+- Keep answers concise but useful
+- Avoid duplicates
+- Cover definitions, concepts, comparisons, processes, and key facts
+
+Module context:
+${sourceText || `Module Code: ${data.moduleCode}\nModule Name: ${data.moduleName}`}
+`.trim();
+
+      const ollamaResponse = await fetch("http://127.0.0.1:11434/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "llama3.2:3b",
+          messages: [
+            {
+              role: "system",
+              content:
+                "You generate accurate student-friendly flashcards and return strict JSON only.",
+            },
+            {
+              role: "user",
+              content: prompt,
+            },
+          ],
+          stream: false,
+        }),
+      });
+
+      if (!ollamaResponse.ok) {
+        const text = await ollamaResponse.text();
+        console.error("Ollama flashcard generation error:", text);
+
+        return res.status(503).json({
+          message: "Flashcard AI service is unavailable right now.",
+        });
+      }
+
+      const aiResult: any = await ollamaResponse.json();
+      const rawText = aiResult?.message?.content?.trim() || "";
+      const parsedJson = extractJsonArrayFromText(rawText);
+
+      if (!parsedJson) {
+        return res.status(500).json({
+          message: "AI returned invalid flashcard format.",
+        });
+      }
+
+      const validatedCards =
+        EduHubGeneratedFlashcardsArraySchema.safeParse(parsedJson);
+
+      if (!validatedCards.success) {
+        return res.status(500).json({
+          message: "Generated flashcards failed validation.",
+          error: validatedCards.error.flatten(),
+        });
+      }
+
+      const setResult = await pool.query(
+        `
+      INSERT INTO eduhub_flashcard_sets (
+        id,
+        module_code,
+        module_name,
+        exam_entry_id,
+        created_by_user_id,
+        created_by_username,
+        created_at,
+        updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
+      RETURNING *
+      `,
+        [
+          crypto.randomUUID(),
+          data.moduleCode.trim(),
+          data.moduleName.trim(),
+          data.examEntryId ?? null,
+          data.createdByUserId.trim(),
+          data.createdByUsername.trim(),
+        ],
+      );
+
+      return res.status(201).json({
+        set: mapEduHubFlashcardSetRow(setResult.rows[0]),
+        cards: validatedCards.data.map((card, index) => ({
+          id: crypto.randomUUID(),
+          question: card.question.trim(),
+          answer: card.answer.trim(),
+          moduleCode: data.moduleCode.trim(),
+          moduleName: data.moduleName.trim(),
+          position: index + 1,
+        })),
+      });
+    } catch (e) {
+      console.error("DB/API error in POST /eduhub/flashcard-sets/generate:", e);
+
+      return res.status(503).json({
+        message: "Failed to generate flashcards.",
+        error: "Service unavailable.",
+      });
+    }
+  },
+);
+
+app.post("/eduhub/flashcard-sets", async (req: Request, res: Response) => {
+  const parsed = EduHubCreateFlashcardSetSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Invalid flashcard set data",
+      error: parsed.error.flatten(),
+    });
+  }
+
+  const data = parsed.data;
+
+  try {
+    const result = await pool.query(
+      `
+      INSERT INTO eduhub_flashcard_sets (
+        id,
+        module_code,
+        module_name,
+        exam_entry_id,
+        created_by_user_id,
+        created_by_username,
+        created_at,
+        updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
+      RETURNING *
+      `,
+      [
+        crypto.randomUUID(),
+        data.moduleCode.trim(),
+        data.moduleName.trim(),
+        data.examEntryId ?? null,
+        data.createdByUserId.trim(),
+        data.createdByUsername.trim(),
+      ],
+    );
+
+    return res.status(201).json(mapEduHubFlashcardSetRow(result.rows[0]));
+  } catch (e) {
+    console.error("DB error in POST /eduhub/flashcard-sets:", e);
+    return res.status(503).json({
+      message: "Failed to create flashcard set",
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.get("/eduhub/flashcard-sets", async (req: Request, res: Response) => {
+  const createdByUserId = String(req.query.createdByUserId ?? "").trim();
+  const moduleCode = String(req.query.moduleCode ?? "").trim();
+  const examEntryId = String(req.query.examEntryId ?? "").trim();
+
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT *
+      FROM eduhub_flashcard_sets
+      WHERE ($1 = '' OR created_by_user_id = $1)
+        AND ($2 = '' OR module_code = $2)
+        AND ($3 = '' OR exam_entry_id = NULLIF($3, '')::uuid)
+      ORDER BY updated_at DESC, created_at DESC
+      `,
+      [createdByUserId, moduleCode, examEntryId],
+    );
+
+    return res.json(rows.map(mapEduHubFlashcardSetRow));
+  } catch (e) {
+    console.error("DB error in GET /eduhub/flashcard-sets:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.get("/eduhub/flashcard-sets/:id", async (req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT *
+      FROM eduhub_flashcard_sets
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [req.params.id],
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        message: "Flashcard set not found",
+      });
+    }
+
+    return res.json(mapEduHubFlashcardSetRow(rows[0]));
+  } catch (e) {
+    console.error("DB error in GET /eduhub/flashcard-sets/:id:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.delete(
+  "/eduhub/flashcard-sets/:id",
+  async (req: Request, res: Response) => {
+    try {
+      const result = await pool.query(
+        `
+      DELETE FROM eduhub_flashcard_sets
+      WHERE id = $1
+      RETURNING *
+      `,
+        [req.params.id],
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({
+          message: "Flashcard set not found",
+        });
+      }
+
+      return res.json({
+        ok: true,
+        deletedId: result.rows[0].id,
+      });
+    } catch (e) {
+      console.error("DB error in DELETE /eduhub/flashcard-sets/:id:", e);
+      return res.status(503).json({
+        error: "Database unavailable.",
+      });
+    }
+  },
+);
 
 const EduHubAskAISchema = z.object({
   message: z.string().min(2).max(4000),
