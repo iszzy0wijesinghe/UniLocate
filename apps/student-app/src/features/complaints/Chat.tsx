@@ -12,6 +12,8 @@ import {
   Text,
   TextInput,
   View,
+  Keyboard,
+  Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -47,6 +49,50 @@ export default function Chat({
   const listRef = useRef<FlatList<any>>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const composerTranslateY = useRef(new Animated.Value(0)).current;
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const showSub = Keyboard.addListener(showEvent, (event) => {
+      const height = event.endCoordinates?.height ?? 0;
+
+      setKeyboardVisible(true);
+      setKeyboardHeight(height);
+
+      Animated.timing(composerTranslateY, {
+        toValue: -(height - 12),
+        duration: 220,
+        useNativeDriver: true,
+      }).start();
+
+      setTimeout(() => {
+        listRef.current?.scrollToEnd({ animated: true });
+      }, 120);
+    });
+
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardVisible(false);
+      setKeyboardHeight(0);
+
+      Animated.timing(composerTranslateY, {
+        toValue: 0,
+        duration: 220,
+        useNativeDriver: true,
+      }).start();
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [composerTranslateY]);
+
   useEffect(() => {
     if (!messagesQuery.data?.length) return;
 
@@ -72,7 +118,7 @@ export default function Chat({
         pollingRef.current = null;
       }
     };
-  }, [caseId]);
+  }, [caseId, messagesQuery]);
 
   const handleSend = async () => {
     if (!draft.trim() && attachments.length === 0) return;
@@ -97,6 +143,10 @@ export default function Chat({
       setRequestCounseling(false);
       setAttachments([]);
       setShowExtras(false);
+
+      setTimeout(() => {
+        listRef.current?.scrollToEnd({ animated: true });
+      }, 120);
     } catch (error) {
       console.error("Complaint chat send failed:", error);
     }
@@ -141,6 +191,7 @@ export default function Chat({
       <KeyboardAvoidingView
         style={styles.screen}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 80 : 0}
       >
         <View style={styles.header}>
           <View style={styles.headerTextWrap}>
@@ -161,12 +212,26 @@ export default function Chat({
         <View style={styles.threadShell}>
           <FlatList
             ref={listRef}
-            style={styles.thread}
+            style={[
+              styles.thread,
+              {
+                marginBottom: keyboardVisible
+                  ? 0
+                  : Math.max(tabBarHeight + 150, 170),
+              },
+            ]}
             data={messagesQuery.data}
             keyExtractor={(item) => item.id}
             renderItem={({ item }) => <ChatBubble message={item} />}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.threadContent}
+            contentContainerStyle={[
+              styles.threadContent,
+              {
+                paddingBottom: keyboardVisible
+                  ? keyboardHeight + 140
+                  : 24,
+              },
+            ]}
             refreshControl={
               <RefreshControl
                 refreshing={messagesQuery.isRefetching}
@@ -193,10 +258,15 @@ export default function Chat({
           />
         </View>
 
-        <View
+        <Animated.View
           style={[
             styles.composerWrap,
-            { marginBottom: Math.max(tabBarHeight + -5, 18) },
+            {
+              left: 16,
+              right: 16,
+              bottom: keyboardVisible ? 45 : Math.max(tabBarHeight + 20, 18),
+              transform: [{ translateY: composerTranslateY }],
+            },
           ]}
         >
           <View style={styles.quickActionsRow}>
@@ -276,7 +346,13 @@ export default function Chat({
               placeholderTextColor="#98A2B3"
               style={styles.input}
               multiline
-              textAlignVertical="center"
+              textAlignVertical="top"
+              editable={!isBusy}
+              onFocus={() => {
+                setTimeout(() => {
+                  listRef.current?.scrollToEnd({ animated: true });
+                }, 120);
+              }}
             />
 
             <Pressable
@@ -297,7 +373,7 @@ export default function Chat({
               {combinedError.message || "Could not send message"}
             </Text>
           ) : null}
-        </View>
+        </Animated.View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -386,7 +462,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   composerWrap: {
-    marginTop: 10,
+    position: "absolute",
     backgroundColor: "#FFFFFF",
     borderRadius: 24,
     borderWidth: 1,
@@ -394,6 +470,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingTop: 10,
     paddingBottom: 10,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 6,
   },
   quickActionsRow: {
     flexDirection: "row",
@@ -496,6 +577,7 @@ const styles = StyleSheet.create({
   },
 });
 
+
 // /** @format */
 
 // import React, { useEffect, useRef, useState } from "react";
@@ -543,6 +625,7 @@ const styles = StyleSheet.create({
 //   const [showExtras, setShowExtras] = useState(false);
 
 //   const listRef = useRef<FlatList<any>>(null);
+//   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
 //   useEffect(() => {
 //     if (!messagesQuery.data?.length) return;
@@ -553,6 +636,23 @@ const styles = StyleSheet.create({
 
 //     return () => clearTimeout(t);
 //   }, [messagesQuery.data]);
+
+//   useEffect(() => {
+//     if (pollingRef.current) {
+//       clearInterval(pollingRef.current);
+//     }
+
+//     pollingRef.current = setInterval(() => {
+//       messagesQuery.refetch();
+//     }, 3000);
+
+//     return () => {
+//       if (pollingRef.current) {
+//         clearInterval(pollingRef.current);
+//         pollingRef.current = null;
+//       }
+//     };
+//   }, [caseId]);
 
 //   const handleSend = async () => {
 //     if (!draft.trim() && attachments.length === 0) return;
@@ -570,6 +670,8 @@ const styles = StyleSheet.create({
 //         requestCounseling,
 //         attachmentIds: uploadedAttachmentIds,
 //       });
+
+//       await messagesQuery.refetch();
 
 //       setDraft("");
 //       setRequestCounseling(false);
