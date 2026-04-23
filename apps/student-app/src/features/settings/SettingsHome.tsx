@@ -147,7 +147,7 @@ export default function SettingsHome({ navigation }: Props) {
         </View>
 
         <View style={styles.sectionCard}>
-          <Text style={styles.sectionLabel}>Preferences</Text>
+          <Text style={styles.sectionLabel}>Notification Settings</Text>
 
           <SettingsRow
             icon={
@@ -162,7 +162,7 @@ export default function SettingsHome({ navigation }: Props) {
             onPress={() => navigation.navigate("Notifications")}
           />
 
-          <SettingsRow
+          {/* <SettingsRow
             icon={
               <Ionicons
                 name="color-palette-outline"
@@ -173,7 +173,7 @@ export default function SettingsHome({ navigation }: Props) {
             title="Personalize"
             subtitle="Adjust language, text size, and visual preferences"
             onPress={() => navigation.navigate("Personalize")}
-          />
+          /> */}
         </View>
 
         <View style={styles.sectionCard}>

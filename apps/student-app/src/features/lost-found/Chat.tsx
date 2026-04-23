@@ -13,6 +13,8 @@ import {
   Image,
   ActivityIndicator,
   Alert,
+  Keyboard,
+  Animated,
 } from "react-native";
 import { RouteProp, useRoute } from "@react-navigation/native";
 import { useBottomTabBarHeight } from "@react-navigation/bottom-tabs";
@@ -82,6 +84,8 @@ function makeOutgoingMessage(
   };
 }
 
+const COMPOSER_HEIGHT = 96;
+
 export default function Chat() {
   const route = useRoute<ChatRoute>();
   const tabBarHeight = useBottomTabBarHeight();
@@ -90,6 +94,10 @@ export default function Chat() {
 
   const username = useUserProfileStore((state) => state.username);
   const currentUserId = useUserProfileStore((state: any) => state.userId);
+
+  const composerTranslateY = useRef(new Animated.Value(0)).current;
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -104,6 +112,46 @@ export default function Chat() {
   const postLabel = useMemo(() => {
     return postId ? `Post #${postId}` : "Lost item";
   }, [postId]);
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const showSub = Keyboard.addListener(showEvent, (event) => {
+      const height = event.endCoordinates?.height ?? 0;
+
+      setKeyboardVisible(true);
+      setKeyboardHeight(height);
+
+      Animated.timing(composerTranslateY, {
+        toValue: -(height - 12),
+        duration: 220,
+        useNativeDriver: true,
+      }).start();
+
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 120);
+    });
+
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardVisible(false);
+      setKeyboardHeight(0);
+
+      Animated.timing(composerTranslateY, {
+        toValue: 0,
+        duration: 220,
+        useNativeDriver: true,
+      }).start();
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [composerTranslateY]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -309,6 +357,10 @@ export default function Chat() {
             createdAt: new Date().toISOString(),
           })),
       );
+
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 120);
     } catch (error: any) {
       Alert.alert("Send failed", error?.message || "Failed to send message");
     } finally {
@@ -367,7 +419,8 @@ export default function Chat() {
     <SafeAreaView style={styles.safeArea} edges={["top"]}>
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={Platform.OS === "ios" ? 80 : 0}>
         <View style={styles.topBrandWrap}>
           <Image
             source={require("../../assets/images/UniLocateLogo.png")}
@@ -411,23 +464,38 @@ export default function Chat() {
         ) : (
           <FlatList
             ref={flatListRef}
-            style={styles.list}
+            style={[
+              styles.list,
+              {
+                marginBottom: COMPOSER_HEIGHT + Math.max(tabBarHeight + 12, 20),
+              },
+            ]}
             data={messages}
             keyExtractor={(m) => m.id}
             renderItem={renderMessage}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.listContent}
+            contentContainerStyle={[
+              styles.listContent,
+              {
+                paddingBottom: keyboardVisible
+                  ? keyboardHeight + COMPOSER_HEIGHT + 20
+                  : COMPOSER_HEIGHT + Math.max(tabBarHeight + 12, 20),
+              },
+            ]}
             onContentSizeChange={() =>
               flatListRef.current?.scrollToEnd({ animated: true })
             }
           />
         )}
 
-        <View
+        <Animated.View
           style={[
             styles.inputAreaWrap,
             {
-              paddingBottom: Math.max(tabBarHeight + 24, 34),
+              left: 12,
+              right: 12,
+              bottom: keyboardVisible ? 45 : Math.max(tabBarHeight + 25, 16),
+              transform: [{ translateY: composerTranslateY }],
             },
           ]}>
           <View style={styles.inputShell}>
@@ -440,6 +508,13 @@ export default function Chat() {
                 onChangeText={setInput}
                 multiline
                 maxLength={500}
+                editable={!sending}
+                textAlignVertical="top"
+                onFocus={() => {
+                  setTimeout(() => {
+                    flatListRef.current?.scrollToEnd({ animated: true });
+                  }, 120);
+                }}
               />
 
               <TouchableOpacity
@@ -461,7 +536,7 @@ export default function Chat() {
               Keep the conversation inside the app for safety.
             </Text>
           </View>
-        </View>
+        </Animated.View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -634,23 +709,6 @@ const styles = StyleSheet.create({
     marginVertical: 4,
   },
 
-  avatarMini: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "#FF7100",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 8,
-    marginBottom: 6,
-  },
-
-  avatarMiniText: {
-    color: "#FFFFFF",
-    fontSize: 11,
-    fontWeight: "800",
-  },
-
   messageBubble: {
     maxWidth: "80%",
     borderRadius: 20,
@@ -712,9 +770,7 @@ const styles = StyleSheet.create({
   },
 
   inputAreaWrap: {
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    backgroundColor: "#F3F6FA",
+    position: "absolute",
   },
 
   inputShell: {
@@ -773,7 +829,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 });
-
 
 // /** @format */
 

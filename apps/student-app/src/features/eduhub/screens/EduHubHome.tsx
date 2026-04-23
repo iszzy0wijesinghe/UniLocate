@@ -37,7 +37,11 @@ type QuickAction = {
 
 type Props = NativeStackScreenProps<EduHubStackParamList, "EduHubHome">;
 
-type QuickActionRoute = "NotesHome" | "AskAI" | "Flashcards" | "ExamMode";
+type QuickActionRoute =
+  | "NotesHome"
+  | "AskAI"
+  | "FlashcardsHome"
+  | "ExamMode";
 
 const quickActions: Array<QuickAction & { route: QuickActionRoute }> = [
   {
@@ -68,7 +72,7 @@ const quickActions: Array<QuickAction & { route: QuickActionRoute }> = [
     iconName: "cards-outline",
     tint: "#7C4DFF",
     bg: "#F1ECFF",
-    route: "Flashcards",
+    route: "FlashcardsHome",
   },
   {
     key: "exam-mode",
@@ -265,6 +269,23 @@ export default function EduHubHome({ navigation }: Props) {
     navigation.navigate("NoteDetails", { noteId });
   };
 
+  const handleQuickActionPress = (route: QuickActionRoute) => {
+    switch (route) {
+      case "NotesHome":
+        navigation.navigate("NotesHome");
+        break;
+      case "AskAI":
+        navigation.navigate("AskAI");
+        break;
+      case "FlashcardsHome":
+        navigation.navigate("FlashcardsHome");
+        break;
+      case "ExamMode":
+        navigation.navigate("ExamMode");
+        break;
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
       <LinearGradient
@@ -391,7 +412,7 @@ export default function EduHubHome({ navigation }: Props) {
               >
                 <QuickActionCard
                   item={item}
-                  onPress={() => navigation.navigate(item.route)}
+                  onPress={() => handleQuickActionPress(item.route)}
                 />
               </View>
             ))}

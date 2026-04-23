@@ -22,6 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+<<<<<<< HEAD
 
 # Playwright
 /test-results/
@@ -29,3 +30,5 @@ dist-ssr
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+=======
+>>>>>>> feature/student-app
