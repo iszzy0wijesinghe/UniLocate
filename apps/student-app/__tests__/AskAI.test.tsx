@@ -4,6 +4,15 @@ import React from "react";
 import { render } from "@testing-library/react-native";
 import AskAI from "../src/features/eduhub/screens/AskAI";
 
+jest.mock("@expo/vector-icons", () => {
+  const React = require("react");
+  const { Text } = require("react-native");
+
+  return {
+    Ionicons: ({ name }: any) => <Text>{name}</Text>,
+  };
+});
+
 jest.mock("@react-navigation/bottom-tabs", () => ({
   useBottomTabBarHeight: () => 60,
 }));
