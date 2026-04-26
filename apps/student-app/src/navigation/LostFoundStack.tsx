@@ -1,12 +1,16 @@
+/** @format */
+
 import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 
 import LostFoundHome from "../features/lost-found/LostFoundHome";
 import ReportItem from "../features/lost-found/ReportItem";
 import ItemDetails from "../features/lost-found/ItemDetails";
 import Chat from "../features/lost-found/Chat";
 import FoundReport from "../features/lost-found/FoundReport";
+import MyLostFounds from "../features/lost-found/MyLostFounds";
+import ChatsHome from "../features/lost-found/ChatsHome";
+import NotificationsHome from "../features/lost-found/NotificationsHome";
 
 export type LostFoundStackParamList = {
   LostFoundHome: undefined;
@@ -14,40 +18,65 @@ export type LostFoundStackParamList = {
   ItemDetails: { id: string };
   FoundReport: { postId: string; postTitle?: string };
   Chat: { postId: string; initialMessage?: string };
+  MyLostFounds: undefined;
+  ChatsHome: undefined;
+  NotificationsHome: undefined;
 };
 
 export type LostFoundStackScreenProps<T extends keyof LostFoundStackParamList> =
-  NativeStackScreenProps<LostFoundStackParamList, T>;
+  {
+    navigation: any;
+    route: { key: string; name: T; params: LostFoundStackParamList[T] };
+  };
 
 const Stack = createNativeStackNavigator<LostFoundStackParamList>();
 
 export default function LostFoundStackNavigator() {
   return (
-    <Stack.Navigator>
+    <Stack.Navigator
+      id="lost-found-stack"
+      screenOptions={{
+        headerShown: true,
+      }}>
       <Stack.Screen
         name="LostFoundHome"
         component={LostFoundHome}
-        options={{ title: "Lost & Found" }}
+        options={{ headerShown: false }}
       />
       <Stack.Screen
         name="ReportItem"
         component={ReportItem}
-        options={{ title: "Report item" }}
+        options={{ headerShown: false }}
       />
       <Stack.Screen
         name="ItemDetails"
         component={ItemDetails}
-        options={{ title: "Item details" }}
+        options={{ headerShown: false }}
       />
       <Stack.Screen
         name="FoundReport"
         component={FoundReport}
-        options={{ title: "I found this item" }}
+        options={{ headerShown: false }}
       />
       <Stack.Screen
         name="Chat"
         component={Chat}
-        options={{ title: "Secure chat" }}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="MyLostFounds"
+        component={MyLostFounds}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="ChatsHome"
+        component={ChatsHome}
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen
+        name="NotificationsHome"
+        component={NotificationsHome}
+        options={{ headerShown: false }}
       />
     </Stack.Navigator>
   );

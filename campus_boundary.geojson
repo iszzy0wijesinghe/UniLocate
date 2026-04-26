@@ -1,0 +1,8 @@
+{
+"type": "FeatureCollection",
+"name": "campus_boundary",
+"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+"features": [
+{ "type": "Feature", "properties": { "fid": 1, "b_id": "HOME01", "name": "Home Test Boundary" }, "geometry": { "type": "Polygon", "coordinates": [ [ [ 79.99993816949933, 6.83260934713651 ], [ 80.000053662123662, 6.832604538294282 ], [ 80.000049936555158, 6.832496894197954 ], [ 79.999935189044535, 6.832500593308192 ], [ 79.99993816949933, 6.83260934713651 ] ] ] } }
+]
+}

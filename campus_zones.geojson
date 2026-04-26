@@ -1,0 +1,10 @@
+{
+"type": "FeatureCollection",
+"name": "campus_zones",
+"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+"features": [
+{ "type": "Feature", "properties": { "fid": 1, "building_id": "B1", "display_name": "HomeRoom", "floors_min": 1, "floors_max": 1, "floor_height_m": 3.0 }, "geometry": { "type": "Polygon", "coordinates": [ [ [ 80.000007837630804, 6.832542485729682 ], [ 80.000007837630804, 6.832501980474528 ], [ 80.000047328657175, 6.832501425607994 ], [ 80.000047328657175, 6.832542115818694 ], [ 80.000007837630804, 6.832542485729682 ] ] ] } },
+{ "type": "Feature", "properties": { "fid": 2, "building_id": "B2", "display_name": "Gate", "floors_min": 1, "floors_max": 1, "floor_height_m": 3.0 }, "geometry": { "type": "Polygon", "coordinates": [ [ [ 80.000030002376832, 6.832595451697773 ], [ 79.999947843322175, 6.832602731406482 ], [ 79.999950431008969, 6.832582819261805 ], [ 80.000026983408929, 6.832567189298195 ], [ 80.000030002376832, 6.832595451697773 ] ] ] } },
+{ "type": "Feature", "properties": { "fid": 3, "building_id": "B3", "display_name": "Free space", "floors_min": 1, "floors_max": 1, "floor_height_m": 3.0 }, "geometry": { "type": "Polygon", "coordinates": [ [ [ 79.999949352806141, 6.832555627406981 ], [ 80.000000459619656, 6.832547705370243 ], [ 80.000001537822456, 6.832504883547776 ], [ 79.999945471275993, 6.832507666966355 ], [ 79.999949352806141, 6.832555627406981 ] ] ] } }
+]
+}

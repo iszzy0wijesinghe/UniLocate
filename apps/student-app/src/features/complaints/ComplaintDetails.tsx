@@ -7,6 +7,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { ComplaintsStackScreenProps } from '../../navigation/ComplaintsStack';
 import EmergencyBanner from './components/EmergencyBanner';
@@ -43,154 +44,165 @@ export default function ComplaintDetails({
 
   if (detailQuery.isLoading) {
     return (
-      <View style={styles.screen}>
-        <View style={styles.loadingCard}>
-          <Text style={styles.loadingText}>Loading complaint details...</Text>
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+        <View style={styles.screen}>
+          <View style={styles.loadingCard}>
+            <Text style={styles.loadingText}>Loading complaint details...</Text>
+          </View>
         </View>
-      </View>
+      </SafeAreaView>
     );
   }
 
   if (!complaint) {
     return (
-      <View style={styles.screen}>
-        <EmptyState
-          title="Complaint unavailable"
-          description="This complaint could not be loaded on the device. Reconnect if the session expired."
-          actionLabel="Reconnect case"
-          onAction={() => navigation.navigate('ReconnectComplaint')}
-        />
-      </View>
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+        <View style={styles.screen}>
+          <EmptyState
+            title="Complaint unavailable"
+            description="This complaint could not be loaded on the device. Reconnect if the session expired."
+            actionLabel="Reconnect case"
+            onAction={() => navigation.navigate('ReconnectComplaint')}
+          />
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={styles.contentContainer}
-      refreshControl={
-        <RefreshControl
-          refreshing={detailQuery.isRefetching}
-          onRefresh={() => detailQuery.refetch()}
-          tintColor={complaintsTheme.colors.accent}
-        />
-      }
-    >
-      <View style={styles.heroCard}>
-        <Text style={styles.heroEyebrow}>{complaint.anonId}</Text>
-        <Text style={styles.heroTitle}>{complaint.title}</Text>
-        <Text style={styles.heroSubtitle}>
-          {getCategoryLabel(complaint.category)} complaint - updated{' '}
-          {formatComplaintDate(complaint.updatedAt)}
-        </Text>
-        <View style={styles.badgeRow}>
-          <StatusBadge
-            label={complaint.status.replaceAll('_', ' ')}
-            tone={getStatusTone(complaint.status)}
+    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={styles.contentContainer}
+        refreshControl={
+          <RefreshControl
+            refreshing={detailQuery.isRefetching}
+            onRefresh={() => detailQuery.refetch()}
+            tintColor={complaintsTheme.colors.accent}
           />
-          <StatusBadge
-            label={complaint.severity}
-            tone={getSeverityTone(complaint.severity)}
-          />
+        }
+      >
+        <View style={styles.heroCard}>
+          <Text style={styles.heroEyebrow}>{complaint.anonId}</Text>
+          <Text style={styles.heroTitle}>{complaint.title}</Text>
+          <Text style={styles.heroSubtitle}>
+            {getCategoryLabel(complaint.category)} complaint - updated{' '}
+            {formatComplaintDate(complaint.updatedAt)}
+          </Text>
+          <View style={styles.badgeRow}>
+            <StatusBadge
+              label={complaint.status.replaceAll('_', ' ')}
+              tone={getStatusTone(complaint.status)}
+            />
+            <StatusBadge
+              label={complaint.severity}
+              tone={getSeverityTone(complaint.severity)}
+            />
+          </View>
         </View>
-      </View>
 
-      {complaint.severity === 'CRITICAL' ? (
-        <View style={{ marginTop: 16 }}>
-          <EmergencyBanner />
+        {complaint.severity === 'CRITICAL' ? (
+          <View style={{ marginTop: 16 }}>
+            <EmergencyBanner />
+          </View>
+        ) : null}
+
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Description</Text>
+          <Text style={styles.bodyText}>{complaint.description}</Text>
         </View>
-      ) : null}
 
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Description</Text>
-        <Text style={styles.bodyText}>{complaint.description}</Text>
-      </View>
-
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Status and timeline</Text>
-        <View style={styles.timeline}>
-          {complaint.timeline.map((update) => (
-            <View key={update.id} style={styles.timelineItem}>
-              <View style={styles.timelineDot} />
-              <View style={styles.timelineContent}>
-                <Text style={styles.timelineTitle}>{update.title}</Text>
-                <Text style={styles.timelineDescription}>{update.description}</Text>
-                <Text style={styles.timelineMeta}>{formatComplaintDate(update.createdAt)}</Text>
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Status and timeline</Text>
+          <View style={styles.timeline}>
+            {complaint.timeline.map((update) => (
+              <View key={update.id} style={styles.timelineItem}>
+                <View style={styles.timelineDot} />
+                <View style={styles.timelineContent}>
+                  <Text style={styles.timelineTitle}>{update.title}</Text>
+                  <Text style={styles.timelineDescription}>{update.description}</Text>
+                  <Text style={styles.timelineMeta}>{formatComplaintDate(update.createdAt)}</Text>
+                </View>
               </View>
-            </View>
-          ))}
+            ))}
+          </View>
         </View>
-      </View>
 
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Latest staff response</Text>
-        {latestStaffResponse ? (
-          <>
-            <Text style={styles.responseSender}>{latestStaffResponse.senderLabel}</Text>
-            <Text style={styles.bodyText}>{latestStaffResponse.body}</Text>
-            <Text style={styles.responseMeta}>
-              Sent {formatComplaintDate(latestStaffResponse.createdAt)}
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Latest staff response</Text>
+          {latestStaffResponse ? (
+            <>
+              <Text style={styles.responseSender}>{latestStaffResponse.senderLabel}</Text>
+              <Text style={styles.bodyText}>{latestStaffResponse.body}</Text>
+              <Text style={styles.responseMeta}>
+                Sent {formatComplaintDate(latestStaffResponse.createdAt)}
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.bodyText}>
+              Staff have not replied yet. Open the anonymous chat to share more information.
             </Text>
-          </>
-        ) : (
-          <Text style={styles.bodyText}>
-            Staff have not replied yet. Open the anonymous chat to share more information.
+          )}
+        </View>
+
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Related details</Text>
+          <Text style={styles.detailRow}>
+            <Text style={styles.detailLabel}>Location:</Text> {complaint.locationText || 'Not provided'}
           </Text>
-        )}
-      </View>
-
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Related details</Text>
-        <Text style={styles.detailRow}>
-          <Text style={styles.detailLabel}>Location:</Text> {complaint.locationText || 'Not provided'}
-        </Text>
-        <Text style={styles.detailRow}>
-          <Text style={styles.detailLabel}>Incident time:</Text>{' '}
-          {complaint.incidentAt ? formatComplaintDate(complaint.incidentAt) : 'Not provided'}
-        </Text>
-        <Text style={styles.detailRow}>
-          <Text style={styles.detailLabel}>People involved:</Text>{' '}
-          {complaint.peopleInvolved || 'Not provided'}
-        </Text>
-        <Text style={styles.detailRow}>
-          <Text style={styles.detailLabel}>Evidence:</Text>{' '}
-          {complaint.attachments.length > 0
-            ? complaint.attachments.map((attachment) => attachment.originalName).join(', ')
-            : 'No evidence uploaded yet'}
-        </Text>
-      </View>
-
-      <View style={styles.actionCard}>
-        <Pressable
-          style={[styles.button, styles.primaryButton]}
-          onPress={() => navigation.navigate('ComplaintChat', { caseId })}
-        >
-          <Text style={styles.primaryButtonText}>Open anonymous chat</Text>
-        </Pressable>
-        <Pressable
-          style={[styles.button, styles.secondaryButton]}
-          onPress={() => counselingMutation.mutate()}
-          disabled={counselingMutation.isPending}
-        >
-          <Text style={styles.secondaryButtonText}>
-            {counselingMutation.isPending ? 'Routing...' : 'Request counseling'}
+          <Text style={styles.detailRow}>
+            <Text style={styles.detailLabel}>Incident time:</Text>{' '}
+            {complaint.incidentAt ? formatComplaintDate(complaint.incidentAt) : 'Not provided'}
           </Text>
-        </Pressable>
-      </View>
+          <Text style={styles.detailRow}>
+            <Text style={styles.detailLabel}>People involved:</Text>{' '}
+            {complaint.peopleInvolved || 'Not provided'}
+          </Text>
+          <Text style={styles.detailRow}>
+            <Text style={styles.detailLabel}>Evidence:</Text>{' '}
+            {complaint.attachments.length > 0
+              ? complaint.attachments.map((attachment) => attachment.originalName).join(', ')
+              : 'No evidence uploaded yet'}
+          </Text>
+        </View>
 
-      <IdentityDisclosureSheet onSubmit={(payload) => disclosureMutation.mutateAsync(payload)} />
-    </ScrollView>
+        <View style={styles.actionCard}>
+          <Pressable
+            style={[styles.button, styles.primaryButton]}
+            onPress={() => navigation.navigate('ComplaintChat', { caseId })}
+          >
+            <Text style={styles.primaryButtonText}>Open anonymous chat</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.button, styles.secondaryButton]}
+            onPress={() => counselingMutation.mutate()}
+            disabled={counselingMutation.isPending}
+          >
+            <Text style={styles.secondaryButtonText}>
+              {counselingMutation.isPending ? 'Routing...' : 'Request counseling'}
+            </Text>
+          </Pressable>
+        </View>
+
+        <IdentityDisclosureSheet onSubmit={(payload) => disclosureMutation.mutateAsync(payload)} />
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: complaintsTheme.colors.background,
+  },
   screen: {
     flex: 1,
     backgroundColor: complaintsTheme.colors.background,
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 8,
   },
   contentContainer: {
-    paddingBottom: 28,
+    paddingBottom: 90,
   },
   loadingCard: {
     marginTop: 12,
