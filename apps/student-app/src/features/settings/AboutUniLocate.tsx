@@ -120,7 +120,7 @@ export default function AboutUniLocate({ navigation }: Props) {
           <LinkRow
             title="Contact Support"
             subtitle="Reach out if you need help with the app"
-            onPress={() => Linking.openURL("mailto:support@unilocate.app")}
+            onPress={() => Linking.openURL("mailto:info.unilocatelk@gmail.com")}
           />
         </View>
 
