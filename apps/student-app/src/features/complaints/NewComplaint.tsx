@@ -105,6 +105,13 @@ export default function NewComplaint({
     emergencyResources: string[];
   } | null>(null);
   const [keepIdentityHidden, setKeepIdentityHidden] = React.useState(true);
+
+  const [formMessage, setFormMessage] = React.useState<{
+    type: "error" | "success";
+    title: string;
+    text: string;
+  } | null>(null);
+
   const [incidentPickerMode, setIncidentPickerMode] = React.useState<
     "date" | "time" | null
   >(null);
@@ -204,50 +211,175 @@ export default function NewComplaint({
     }
   };
 
-  const handleSubmit = form.handleSubmit(async (payload) => {
-    const now = new Date();
-    const trimmedTitle = payload.title.trim();
+  const showError = (title: string, text: string) => {
+    setFormMessage({ type: "error", title, text });
+  };
 
-    if (!trimmedTitle) {
-      form.setError("title", { type: "manual", message: "Title is required." });
-      return;
-    }
+  const clearFormMessage = () => {
+    if (formMessage) setFormMessage(null);
+  };
 
-    if (!isValidTitle(trimmedTitle)) {
-      form.setError("title", {
-        type: "manual",
-        message: "Title can contain letters and spaces only.",
-      });
-      return;
-    }
+  const handleSubmit = form.handleSubmit(
+    async (payload) => {
+      const now = new Date();
+      const trimmedTitle = payload.title.trim();
+      const trimmedDescription = payload.description.trim();
 
-    if (payload.incidentAt) {
-      const incidentDate = new Date(payload.incidentAt);
-      if (!Number.isNaN(incidentDate.getTime()) && incidentDate > now) {
-        form.setError("incidentAt", {
+      setFormMessage(null);
+
+      if (!trimmedTitle) {
+        form.setError("title", {
           type: "manual",
-          message: "Future date and time cannot be selected.",
+          message: "Title is required.",
         });
+        showError("Title required", "Please add a short complaint title.");
         return;
       }
-    }
 
-    const result = await createMutation.mutateAsync({
-      ...payload,
-      title: trimmedTitle,
-      attachments,
-    });
+      if (trimmedTitle.length < 5) {
+        form.setError("title", {
+          type: "manual",
+          message: "Title must be at least 5 characters.",
+        });
+        showError(
+          "Title too short",
+          "Please enter a clearer title with at least 5 characters.",
+        );
+        return;
+      }
 
-    await notifyComplaintSubmitted(trimmedTitle);
+      if (!isValidTitle(trimmedTitle)) {
+        form.setError("title", {
+          type: "manual",
+          message: "Title can contain letters and spaces only.",
+        });
+        showError(
+          "Invalid title",
+          "Use only letters and spaces in the title. Numbers and symbols are not allowed.",
+        );
+        return;
+      }
 
-    setReceipt({
-      anonId: result.anonId,
-      secret: result.secret,
-      complaintId: result.complaint.id,
-      severity: result.complaint.severity,
-      emergencyResources: result.emergencyResources,
-    });
-  });
+      if (!trimmedDescription) {
+        form.setError("description", {
+          type: "manual",
+          message: "Description is required.",
+        });
+        showError(
+          "Description required",
+          "Please describe what happened so staff can understand the complaint.",
+        );
+        return;
+      }
+
+      if (trimmedDescription.length < 20) {
+        form.setError("description", {
+          type: "manual",
+          message: "Description must be at least 20 characters.",
+        });
+        showError(
+          "Add more details",
+          "Please add at least 20 characters explaining what happened, where it happened, and what support is needed.",
+        );
+        return;
+      }
+
+      if (payload.incidentAt) {
+        const incidentDate = new Date(payload.incidentAt);
+
+        if (Number.isNaN(incidentDate.getTime())) {
+          form.setError("incidentAt", {
+            type: "manual",
+            message: "Invalid incident date.",
+          });
+          showError(
+            "Invalid incident time",
+            "Please select a valid incident date and time.",
+          );
+          return;
+        }
+
+        if (incidentDate > now) {
+          form.setError("incidentAt", {
+            type: "manual",
+            message: "Future date and time cannot be selected.",
+          });
+          showError(
+            "Future time not allowed",
+            "Incident time cannot be in the future. Please select a past or current time.",
+          );
+          return;
+        }
+      }
+
+      if (!payload.consent) {
+        form.setError("consent", {
+          type: "manual",
+          message: "Consent confirmation is required.",
+        });
+        showError(
+          "Confirmation required",
+          "Please confirm that this report is accurate to the best of your knowledge.",
+        );
+        return;
+      }
+
+      try {
+        const result = await createMutation.mutateAsync({
+          ...payload,
+          title: trimmedTitle,
+          description: trimmedDescription,
+          locationText: payload.locationText?.trim() ?? "",
+          peopleInvolved: payload.peopleInvolved?.trim() ?? "",
+          attachments,
+        });
+
+        await notifyComplaintSubmitted(trimmedTitle);
+
+        setReceipt({
+          anonId: result.anonId,
+          secret: result.secret,
+          complaintId: result.complaint.id,
+          severity: result.complaint.severity,
+          emergencyResources: result.emergencyResources,
+        });
+      } catch (error: any) {
+        showError(
+          "Could not submit complaint",
+          error?.message ||
+            "Network error. Please check your connection and try again.",
+        );
+      }
+    },
+    () => {
+      const errors = form.formState.errors;
+
+      if (errors.title?.message) {
+        showError("Check complaint title", String(errors.title.message));
+        return;
+      }
+
+      if (errors.description?.message) {
+        showError("Check description", String(errors.description.message));
+        return;
+      }
+
+      if (errors.incidentAt?.message) {
+        showError("Check incident time", String(errors.incidentAt.message));
+        return;
+      }
+
+      if (errors.consent?.message) {
+        showError("Confirmation required", String(errors.consent.message));
+        return;
+      }
+
+      showError(
+        "Form incomplete",
+        "Please check the highlighted fields and try again.",
+      );
+    },
+  );
 
   if (receipt) {
     return (
@@ -368,14 +500,25 @@ export default function NewComplaint({
               render={({ field }) => (
                 <TextInput
                   value={field.value}
+                  // onChangeText={(text) => {
+                  //   const cleaned = text
+                  //     .replace(/[^A-Za-z\s]/g, "")
+                  //     .replace(/\s{2,}/g, " ");
+                  //   field.onChange(cleaned);
+                  //   if (form.formState.errors.title) {
+                  //     form.clearErrors("title");
+                  //   }
+                  // }}
                   onChangeText={(text) => {
-                    const cleaned = text
-                      .replace(/[^A-Za-z\s]/g, "")
-                      .replace(/\s{2,}/g, " ");
+                    const cleaned = sanitizeTitleInput(text);
+
                     field.onChange(cleaned);
+
                     if (form.formState.errors.title) {
                       form.clearErrors("title");
                     }
+
+                    clearFormMessage();
                   }}
                   placeholder="Short summary of what happened"
                   placeholderTextColor="#98A2B3"
@@ -391,7 +534,15 @@ export default function NewComplaint({
               render={({ field }) => (
                 <TextInput
                   value={field.value}
-                  onChangeText={field.onChange}
+                  onChangeText={(text) => {
+                    field.onChange(text);
+
+                    if (form.formState.errors.description) {
+                      form.clearErrors("description");
+                    }
+
+                    clearFormMessage();
+                  }}
                   placeholder="Describe what happened, where it happened, who was involved, and what follow-up is needed."
                   placeholderTextColor="#98A2B3"
                   style={[styles.input, styles.multilineInput]}
@@ -531,7 +682,11 @@ export default function NewComplaint({
               render={({ field }) => (
                 <Pressable
                   style={styles.consentRow}
-                  onPress={() => field.onChange(!field.value)}>
+                  onPress={() => {
+                    field.onChange(!field.value);
+                    form.clearErrors("consent");
+                    clearFormMessage();
+                  }}>
                   <View
                     style={[
                       styles.checkbox,
@@ -547,7 +702,7 @@ export default function NewComplaint({
               )}
             />
 
-            {form.formState.errors.title?.message ? (
+            {/* {form.formState.errors.title?.message ? (
               <Text style={styles.errorText}>
                 {form.formState.errors.title.message}
               </Text>
@@ -572,6 +727,27 @@ export default function NewComplaint({
                 {(createMutation.error as Error).message ||
                   "Could not submit complaint."}
               </Text>
+            ) : null} */}
+
+            {formMessage ? (
+              <View
+                style={[
+                  styles.formMessageCard,
+                  formMessage.type === "error"
+                    ? styles.formMessageCardError
+                    : styles.formMessageCardSuccess,
+                ]}>
+                <Text
+                  style={[
+                    styles.formMessageTitle,
+                    formMessage.type === "error"
+                      ? styles.formMessageTitleError
+                      : styles.formMessageTitleSuccess,
+                  ]}>
+                  {formMessage.title}
+                </Text>
+                <Text style={styles.formMessageText}>{formMessage.text}</Text>
+              </View>
             ) : null}
 
             <View style={styles.actionRow}>
@@ -801,4 +977,42 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     color: complaintsTheme.colors.muted,
   },
+
+  formMessageCard: {
+  marginTop: 18,
+  borderRadius: 18,
+  paddingHorizontal: 14,
+  paddingVertical: 13,
+  borderWidth: 1,
+},
+
+formMessageCardError: {
+  backgroundColor: "#FEF3F2",
+  borderColor: "#FECACA",
+},
+
+formMessageCardSuccess: {
+  backgroundColor: "#ECFDF3",
+  borderColor: "#ABEFC6",
+},
+
+formMessageTitle: {
+  fontSize: 14,
+  fontWeight: "800",
+  marginBottom: 4,
+},
+
+formMessageTitleError: {
+  color: "#B42318",
+},
+
+formMessageTitleSuccess: {
+  color: "#027A48",
+},
+
+formMessageText: {
+  fontSize: 13,
+  lineHeight: 19,
+  color: "#475467",
+},
 });

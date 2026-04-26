@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Dimensions,
   Image,
@@ -59,6 +60,17 @@ function formatTime(date: Date) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+type MapLoadState = "idle" | "loading" | "ready" | "slow" | "error";
+
+function withTimeout<T>(promise: Promise<T>, ms = 8000): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error("timeout")), ms),
+    ),
+  ]);
 }
 
 // function normalizeText(value: string) {
@@ -299,6 +311,12 @@ export default function Home() {
   const [zonesError, setZonesError] = useState("");
   const [mapRefreshKey, setMapRefreshKey] = useState(0);
 
+  const [mapLoadState, setMapLoadState] = useState<MapLoadState>("idle");
+  const [mapErrorMessage, setMapErrorMessage] = useState("");
+  const latestMapRequestId = useRef(0);
+  const cachedOccupancyZonesRef = useRef<OccupancyZone[]>([]);
+  const cachedBoundaryRef = useRef<CampusBoundary | null>(null);
+
   const [isPinging, setIsPinging] = useState(false);
   const [lastPingAt, setLastPingAt] = useState<Date | null>(null);
   const [networkOk, setNetworkOk] = useState(true);
@@ -340,35 +358,136 @@ export default function Home() {
     };
   }, []);
 
+  // useEffect(() => {
+  //   Promise.all([fetchOccupancyZones(), fetchBoundary()])
+  //     .then(([zoneData, boundaryData]) => {
+  //       const convertedZones = convertOccupancyZones(zoneData);
+  //       const convertedBoundary = convertBoundary(boundaryData);
+
+  //       setOccupancyZones(zoneData);
+  //       setZones(convertedZones);
+  //       setBoundary(convertedBoundary);
+  //       setZonesStatus(`${convertedZones.length} zones loaded`);
+  //     })
+  //     .catch((err) => {
+  //       console.error(err);
+  //       setZonesError(err.message || "Failed to load map");
+  //       setZonesStatus("Map loading failed");
+  //     });
+  // }, []);
+
   useEffect(() => {
-    Promise.all([fetchOccupancyZones(), fetchBoundary()])
-      .then(([zoneData, boundaryData]) => {
+    const loadInitialMap = async () => {
+      const requestId = ++latestMapRequestId.current;
+
+      try {
+        setMapLoadState("loading");
+        setMapErrorMessage("");
+        setZonesError("");
+        setZonesStatus("Loading map...");
+
+        const [zoneData, boundaryData] = await withTimeout(
+          Promise.all([fetchOccupancyZones(), fetchBoundary()]),
+          8000,
+        );
+
+        if (requestId !== latestMapRequestId.current) return;
+
         const convertedZones = convertOccupancyZones(zoneData);
         const convertedBoundary = convertBoundary(boundaryData);
+
+        cachedOccupancyZonesRef.current = zoneData;
+        cachedBoundaryRef.current = convertedBoundary;
 
         setOccupancyZones(zoneData);
         setZones(convertedZones);
         setBoundary(convertedBoundary);
         setZonesStatus(`${convertedZones.length} zones loaded`);
-      })
-      .catch((err) => {
-        console.error(err);
-        setZonesError(err.message || "Failed to load map");
-        setZonesStatus("Map loading failed");
-      });
+        setZonesError("");
+        setMapErrorMessage("");
+        setMapLoadState("ready");
+        setNetworkOk(true);
+      } catch (err: any) {
+        if (requestId !== latestMapRequestId.current) return;
+
+        const cachedZones = cachedOccupancyZonesRef.current;
+        const cachedBoundary = cachedBoundaryRef.current;
+
+        if (cachedZones.length > 0) {
+          setOccupancyZones(cachedZones);
+          setZones(convertOccupancyZones(cachedZones));
+          setBoundary(cachedBoundary);
+          setZonesStatus(`Showing cached map · ${cachedZones.length} zones`);
+        } else {
+          setZonesStatus("Map loading failed");
+        }
+
+        setNetworkOk(false);
+        setMapLoadState("slow");
+        setMapErrorMessage("Network Slow. Could Not Load Map.");
+        setZonesError("Network Slow. Could Not Load Map.");
+
+        console.log("[home] map loading failed:", err?.message);
+      }
+    };
+
+    loadInitialMap();
   }, []);
 
+  // useEffect(() => {
+  //   const interval = setInterval(() => {
+  //     fetchOccupancyZones()
+  //       .then((zoneData) => {
+  //         setOccupancyZones(zoneData);
+  //         setZones(convertOccupancyZones(zoneData));
+  //       })
+  //       .catch((err) => {
+  //         console.error("Failed to refresh occupancy zones:", err);
+  //       });
+  //   }, 10000);
+
+  //   return () => clearInterval(interval);
+  // }, []);
+
   useEffect(() => {
-    const interval = setInterval(() => {
-      fetchOccupancyZones()
-        .then((zoneData) => {
-          setOccupancyZones(zoneData);
-          setZones(convertOccupancyZones(zoneData));
-        })
-        .catch((err) => {
-          console.error("Failed to refresh occupancy zones:", err);
-        });
-    }, 10000);
+    const refreshOccupancy = async () => {
+      const requestId = ++latestMapRequestId.current;
+
+      try {
+        const zoneData = await withTimeout(fetchOccupancyZones(), 6000);
+
+        if (requestId !== latestMapRequestId.current) return;
+
+        cachedOccupancyZonesRef.current = zoneData;
+
+        setOccupancyZones(zoneData);
+        setZones(convertOccupancyZones(zoneData));
+        setZonesStatus(`${zoneData.length} zones loaded`);
+        setZonesError("");
+        setMapErrorMessage("");
+        setMapLoadState("ready");
+        setNetworkOk(true);
+      } catch (err: any) {
+        if (requestId !== latestMapRequestId.current) return;
+
+        const cachedZones = cachedOccupancyZonesRef.current;
+
+        if (cachedZones.length > 0) {
+          setOccupancyZones(cachedZones);
+          setZones(convertOccupancyZones(cachedZones));
+          setZonesStatus(`Showing cached map · ${cachedZones.length} zones`);
+        }
+
+        setNetworkOk(false);
+        setMapLoadState("slow");
+        setMapErrorMessage("Network Slow. Could Not Load Map.");
+        setZonesError("Network Slow. Could Not Load Map.");
+
+        console.log("[home] failed to refresh occupancy zones:", err?.message);
+      }
+    };
+
+    const interval = setInterval(refreshOccupancy, 10000);
 
     return () => clearInterval(interval);
   }, []);
@@ -639,6 +758,34 @@ export default function Home() {
         isPinging={isPinging}
         lastPingAt={lastPingAt}
       />
+
+      {mapLoadState === "loading" || mapLoadState === "slow" ? (
+        <View style={styles.mapDarkOverlay} pointerEvents="auto">
+          {mapErrorMessage ? (
+            <View style={styles.redToast}>
+              <Ionicons name="warning-outline" size={16} color="#FFFFFF" />
+              <Text style={styles.redToastText}>{mapErrorMessage}</Text>
+            </View>
+          ) : null}
+
+          <View style={styles.iosLoaderCard}>
+            <View style={styles.loaderGlow}>
+              <ActivityIndicator size="large" color="#FFFFFF" />
+            </View>
+
+            <Text style={styles.loaderTitle}>
+              {mapLoadState === "loading"
+                ? "Loading live occupancy..."
+                : "Still trying to reconnect..."}
+            </Text>
+
+            <Text style={styles.loaderSubtitle}>
+              UniLocate is refreshing the campus map and occupancy data.
+              Switch to SLIIT-STD to Connect.
+            </Text>
+          </View>
+        </View>
+      ) : null}
 
       <LinearGradient
         colors={[
@@ -1284,5 +1431,84 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
     color: "#6B7280",
+  },
+
+  mapDarkOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(2, 6, 23, 0.55)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+    zIndex: 60,
+  },
+
+  iosLoaderCard: {
+    width: "88%",
+    borderRadius: 28,
+    paddingVertical: 26,
+    paddingHorizontal: 18,
+    backgroundColor: "rgba(5, 54, 104, 0.92)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 10,
+  },
+
+  loaderGlow: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    backgroundColor: "rgba(255,255,255,0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+  },
+
+  loaderTitle: {
+    marginTop: 14,
+    fontSize: 16,
+    fontWeight: "900",
+    color: "#FFFFFF",
+    textAlign: "center",
+  },
+
+  loaderSubtitle: {
+    marginTop: 6,
+    fontSize: 12.5,
+    lineHeight: 19,
+    color: "#DCEEF2",
+    textAlign: "center",
+  },
+
+  redToast: {
+    position: "absolute",
+    top: 48,
+    left: 16,
+    right: 16,
+    minHeight: 48,
+    borderRadius: 16,
+    backgroundColor: "#D92D20",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    shadowColor: "#D92D20",
+    shadowOpacity: 0.24,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
+  },
+
+  redToastText: {
+    flex: 1,
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "800",
   },
 });

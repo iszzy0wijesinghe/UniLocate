@@ -212,6 +212,10 @@ export default function ReportItem() {
   const [stepTwoLogsLoading, setStepTwoLogsLoading] = useState(true);
   const [pageScrollEnabled, setPageScrollEnabled] = useState(true);
   const [mapRefreshKey, setMapRefreshKey] = useState(0);
+
+  const stepTwoScrollRef = useRef<ScrollView | null>(null);
+  const stepTwoMapY = useRef(0);
+
   const [gpsAccuracyText, setGpsAccuracyText] = useState("GPS");
   const { point } = useLiveLocation();
 
@@ -392,71 +396,71 @@ export default function ReportItem() {
   };
 
   const handleSubmit = async () => {
-  if (title.trim().length < 5) {
-    setFormMessage({
-      type: "error",
-      title: "Add a better title",
-      text: "Please enter a short title with at least 5 characters.",
-    });
-    return;
-  }
+    if (title.trim().length < 5) {
+      setFormMessage({
+        type: "error",
+        title: "Add a better title",
+        text: "Please enter a short title with at least 5 characters.",
+      });
+      return;
+    }
 
-  if (!approxDateTime) {
-    setFormMessage({
-      type: "error",
-      title: "Date and time missing",
-      text: "Please select the approximate date and time.",
-    });
-    return;
-  }
+    if (!approxDateTime) {
+      setFormMessage({
+        type: "error",
+        title: "Date and time missing",
+        text: "Please select the approximate date and time.",
+      });
+      return;
+    }
 
-  if (!validateStepFour()) return;
+    if (!validateStepFour()) return;
 
-  try {
-    setFormMessage(null);
-    setSubmitting(true);
+    try {
+      setFormMessage(null);
+      setSubmitting(true);
 
-    const uploadedImages = await Promise.all(
-      imageUris.map((uri) => uploadLostFoundImage(uri)),
-    );
+      const uploadedImages = await Promise.all(
+        imageUris.map((uri) => uploadLostFoundImage(uri)),
+      );
 
-    const post = await createLostFoundPost({
-      type: reportMode,
-      category,
-      title: title.trim(),
-      description: description.trim(),
-      timeHint,
-      images: uploadedImages,
-      ownerUserId: String(userId ?? "local-user"),
-      ownerUsername: username?.trim() || "Campus User",
-    });
+      const post = await createLostFoundPost({
+        type: reportMode,
+        category,
+        title: title.trim(),
+        description: description.trim(),
+        timeHint,
+        images: uploadedImages,
+        ownerUserId: String(userId ?? "local-user"),
+        ownerUsername: username?.trim() || "Campus User",
+      });
 
-    await notifyLostFoundPosted(title.trim());
+      await notifyLostFoundPosted(title.trim());
 
-    setCreatedPostId(post.id);
-    setFormMessage({
-      type: "success",
-      title: "Post published successfully",
-      text: "Your lost item post is now live. Hopefully someone will spot it soon.",
-    });
-    setSubmitted(true);
+      setCreatedPostId(post.id);
+      setFormMessage({
+        type: "success",
+        title: "Post published successfully",
+        text: "Your lost item post is now live. Hopefully someone will spot it soon.",
+      });
+      setSubmitted(true);
 
-    setTimeout(() => {
-      navigation.navigate("LostFoundHome");
-    }, 1400);
-  } catch (err) {
-    console.error(err);
-    setFormMessage({
-      type: "error",
-      title: "Could not publish post",
-      text:
-        (err as Error).message ||
-        "Network error. Please check your connection and try again.",
-    });
-  } finally {
-    setSubmitting(false);
-  }
-};
+      setTimeout(() => {
+        navigation.navigate("LostFoundHome");
+      }, 1400);
+    } catch (err) {
+      console.error(err);
+      setFormMessage({
+        type: "error",
+        title: "Could not publish post",
+        text:
+          (err as Error).message ||
+          "Network error. Please check your connection and try again.",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleCollectedItem = async () => {
     try {
@@ -671,6 +675,7 @@ export default function ReportItem() {
         ) : null}
 
         <ScrollView
+          ref={stepTwoScrollRef}
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
           scrollEnabled={pageScrollEnabled}>
@@ -825,7 +830,11 @@ export default function ReportItem() {
                 not shared with anyone else.
               </Text>
 
-              <View style={styles.stepTwoMapCard}>
+              <View
+                style={styles.stepTwoMapCard}
+                onLayout={(event) => {
+                  stepTwoMapY.current = event.nativeEvent.layout.y;
+                }}>
                 <View style={styles.stepTwoHeaderRow}>
                   <Text style={styles.stepTwoLabel}>Recent location logs</Text>
 
@@ -885,6 +894,16 @@ export default function ReportItem() {
                     </View>
                   )}
                 </View>
+
+                {selectedLog ? (
+                  <View style={styles.focusedLogChip}>
+                    <Ionicons name="location" size={14} color="#053668" />
+                    <Text style={styles.focusedLogText}>
+                      Focused log · {selectedLog.zoneName || "Campus Location"}{" "}
+                      · {formatLogTime(selectedLog.timestamp)}
+                    </Text>
+                  </View>
+                ) : null}
 
                 <View style={styles.stepTwoHintCard}>
                   <Ionicons
@@ -950,6 +969,13 @@ export default function ReportItem() {
                               setSelectedLog(item);
                               setPageScrollEnabled(true);
                               setMapRefreshKey((prev) => prev + 1);
+
+                              setTimeout(() => {
+                                stepTwoScrollRef.current?.scrollTo({
+                                  y: Math.max(stepTwoMapY.current - 12, 0),
+                                  animated: true,
+                                });
+                              }, 120);
                             }}
                           />
                         ))}
@@ -2071,5 +2097,23 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontWeight: "700",
     fontSize: 14,
+  },
+
+  focusedLogChip: {
+    marginTop: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    alignSelf: "flex-start",
+    backgroundColor: "#EDF3F8",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+
+  focusedLogText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: "#053668",
   },
 });

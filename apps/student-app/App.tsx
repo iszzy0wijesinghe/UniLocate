@@ -1,5 +1,15 @@
 /** @format */
 
+import { LogBox } from "react-native";
+
+LogBox.ignoreLogs([
+  "expo-notifications",
+  "`expo-notifications` functionality is not fully supported in Expo Go",
+  "Android Push notifications",
+  "NativeModule: AsyncStorage is null",
+  "Require cycle:",
+]);
+
 import React, { useEffect } from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import FirstRunNavigator from "./src/navigation/FirstRunNavigator";

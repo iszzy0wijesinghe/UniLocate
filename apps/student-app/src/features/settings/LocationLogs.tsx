@@ -133,6 +133,9 @@ export default function LocationLogs({ navigation }: Props) {
   const [pageScrollEnabled, setPageScrollEnabled] = useState(true);
   const [mapRefreshKey, setMapRefreshKey] = useState(0);
 
+  const scrollRef = useRef<ScrollView | null>(null);
+  const mapSectionY = useRef(0);
+
   const [gpsAccuracyText, setGpsAccuracyText] = useState("GPS");
 
   const initialCenterAppliedRef = useRef(false);
@@ -297,6 +300,7 @@ export default function LocationLogs({ navigation }: Props) {
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={styles.contentContainer}
         scrollEnabled={pageScrollEnabled}
         nestedScrollEnabled>
@@ -345,7 +349,11 @@ export default function LocationLogs({ navigation }: Props) {
           </View>
         ) : null}
 
-        <View style={styles.mapCard}>
+        <View
+          style={styles.mapCard}
+          onLayout={(event) => {
+            mapSectionY.current = event.nativeEvent.layout.y;
+          }}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionLabel}>Map preview</Text>
 
@@ -402,6 +410,16 @@ export default function LocationLogs({ navigation }: Props) {
               </View>
             )}
           </View>
+
+          {selectedLog ? (
+            <View style={styles.focusedLogChip}>
+              <Ionicons name="location" size={14} color="#053668" />
+              <Text style={styles.focusedLogText}>
+                Focused log · {selectedLog.zoneName || "Campus Location"} ·{" "}
+                {formatLogTime(selectedLog.timestamp)}
+              </Text>
+            </View>
+          ) : null}
 
           <View style={styles.mapHintCard}>
             <Ionicons
@@ -493,6 +511,13 @@ export default function LocationLogs({ navigation }: Props) {
                         setSelectedLog(item);
                         setPageScrollEnabled(true);
                         setMapRefreshKey((prev) => prev + 1);
+
+                        setTimeout(() => {
+                          scrollRef.current?.scrollTo({
+                            y: Math.max(mapSectionY.current - 14, 0),
+                            animated: true,
+                          });
+                        }, 120);
                       }}
                       onDelete={() => handleDeleteSingleLog(item)}
                     />
@@ -858,4 +883,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  focusedLogChip: {
+  marginTop: 12,
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 6,
+  alignSelf: "flex-start",
+  backgroundColor: "#EDF3F8",
+  borderRadius: 999,
+  paddingHorizontal: 12,
+  paddingVertical: 8,
+},
+
+focusedLogText: {
+  fontSize: 12,
+  fontWeight: "800",
+  color: "#053668",
+},
 });
