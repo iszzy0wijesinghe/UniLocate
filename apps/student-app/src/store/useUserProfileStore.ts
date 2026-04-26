@@ -1,24 +1,31 @@
-import { create } from 'zustand';
-import { persist, createJSONStorage } from 'zustand/middleware';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 type UserProfileState = {
+  userId: string | null;
   username: string;
+  isLoggedIn: boolean;
   hasCompletedFirstRun: boolean;
-  setUsername: (username: string) => void;
+  setUserProfile: (input: { userId: string; username: string }) => void;
   completeFirstRun: () => void;
+  logout: () => void;
   resetProfile: () => void;
 };
 
 export const useUserProfileStore = create<UserProfileState>()(
   persist(
     (set) => ({
-      username: '',
+      userId: null,
+      username: "",
+      isLoggedIn: false,
       hasCompletedFirstRun: false,
 
-      setUsername: (username: string) =>
+      setUserProfile: ({ userId, username }) =>
         set({
+          userId,
           username: username.trim(),
+          isLoggedIn: true,
         }),
 
       completeFirstRun: () =>
@@ -26,15 +33,25 @@ export const useUserProfileStore = create<UserProfileState>()(
           hasCompletedFirstRun: true,
         }),
 
+      logout: () =>
+        set({
+          userId: null,
+          username: "",
+          isLoggedIn: false,
+          hasCompletedFirstRun: false,
+        }),
+
       resetProfile: () =>
         set({
-          username: '',
+          userId: null,
+          username: "",
+          isLoggedIn: false,
           hasCompletedFirstRun: false,
         }),
     }),
     {
-      name: 'unilocate-user-profile',
+      name: "unilocate-user-profile",
       storage: createJSONStorage(() => AsyncStorage),
-    }
-  )
+    },
+  ),
 );

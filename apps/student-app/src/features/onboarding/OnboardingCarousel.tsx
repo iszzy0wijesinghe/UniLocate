@@ -200,7 +200,7 @@ export default function OnboardingCarousel({ navigation }: Props) {
 
   const handleNext = () => {
     if (currentIndex === slides.length - 1) {
-      navigation.navigate('UsernameRegistration');
+      navigation.navigate('AuthWelcome');
       return;
     }
 
@@ -211,7 +211,7 @@ export default function OnboardingCarousel({ navigation }: Props) {
   };
 
   const handleSkip = () => {
-    navigation.navigate('UsernameRegistration');
+    navigation.navigate('AuthWelcome');
   };
 
   const handleMomentumEnd = (event: any) => {

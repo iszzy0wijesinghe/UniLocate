@@ -51,7 +51,7 @@ import CampusMap2D, {
 } from "../home/components/CampusMap2D";
 import { useLiveLocation } from "../../services/geo/useLiveLocation";
 import { useUserProfileStore } from "../../store/useUserProfileStore";
-import { notifyLostFoundPosted } from "../../services/nortifications/notificationService";
+import { notifyLostFoundPosted } from "../../services/notifications/notificationService";
 
 type ReportRoute = RouteProp<LostFoundStackParamList, "ReportItem">;
 type Navigation = LostFoundStackScreenProps<"ReportItem">["navigation"];

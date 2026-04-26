@@ -1,7 +1,9 @@
-import React from 'react';
+/** @format */
+
+import React from "react";
 import DateTimePicker, {
   type DateTimePickerEvent,
-} from '@react-native-community/datetimepicker';
+} from "@react-native-community/datetimepicker";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -14,27 +16,28 @@ import {
   Text,
   TextInput,
   View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Controller, useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Controller, useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
 
-import type { ComplaintsStackScreenProps } from '../../navigation/ComplaintsStack';
-import CategoryPicker from './components/CategoryPicker';
-import EmergencyBanner from './components/EmergencyBanner';
-import EvidenceUploader from './components/EvidenceUploader';
-import StatusBadge from './components/StatusBadge';
-import { complaintsTheme } from './components/theme';
+import type { ComplaintsStackScreenProps } from "../../navigation/ComplaintsStack";
+import CategoryPicker from "./components/CategoryPicker";
+import EmergencyBanner from "./components/EmergencyBanner";
+import EvidenceUploader from "./components/EvidenceUploader";
+import StatusBadge from "./components/StatusBadge";
+import { complaintsTheme } from "./components/theme";
 import {
   classifySeverity,
   complaintCategories,
   getCategoryLabel,
-} from './complaints.api';
-import { useCreateComplaintMutation } from './hooks/useComplaints';
-import type { AttachmentDraft, CreateComplaintInput } from './types/complaints';
-import { createComplaintSchema } from './validations/complaintSchemas';
+} from "./complaints.api";
+import { useCreateComplaintMutation } from "./hooks/useComplaints";
+import type { AttachmentDraft, CreateComplaintInput } from "./types/complaints";
+import { createComplaintSchema } from "./validations/complaintSchemas";
+import { notifyComplaintSubmitted } from "../../services/notifications/notificationService";
 
-type CreateComplaintFormValues = Omit<CreateComplaintInput, 'attachments'>;
+type CreateComplaintFormValues = Omit<CreateComplaintInput, "attachments">;
 
 function parseIncidentValue(value?: string) {
   if (!value) {
@@ -47,34 +50,52 @@ function parseIncidentValue(value?: string) {
 
 function formatIncidentValue(value?: string) {
   if (!value) {
-    return 'Select date and time';
+    return "Select date and time";
   }
 
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
-    return 'Select date and time';
+    return "Select date and time";
   }
 
   const year = parsed.getFullYear();
-  const month = `${parsed.getMonth() + 1}`.padStart(2, '0');
-  const day = `${parsed.getDate()}`.padStart(2, '0');
-  const hours = `${parsed.getHours()}`.padStart(2, '0');
-  const minutes = `${parsed.getMinutes()}`.padStart(2, '0');
+  const month = `${parsed.getMonth() + 1}`.padStart(2, "0");
+  const day = `${parsed.getDate()}`.padStart(2, "0");
+  const hours = `${parsed.getHours()}`.padStart(2, "0");
+  const minutes = `${parsed.getMinutes()}`.padStart(2, "0");
 
   return `${year}-${month}-${day} ${hours}:${minutes}`;
 }
 
 function getClipboard() {
   try {
-    return require('expo-clipboard') as { setStringAsync(value: string): Promise<void> };
+    return require("expo-clipboard") as {
+      setStringAsync(value: string): Promise<void>;
+    };
   } catch {
     return null;
   }
 }
 
+function sanitizeTitleInput(value: string) {
+  return value.replace(/[^A-Za-z\s]/g, "").replace(/\s{2,}/g, " ");
+}
+
+function isValidTitle(value: string) {
+  return /^[A-Za-z\s]+$/.test(value.trim());
+}
+
+function isSameDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
 export default function NewComplaint({
   navigation,
-}: ComplaintsStackScreenProps<'NewComplaint'>) {
+}: ComplaintsStackScreenProps<"NewComplaint">) {
   const [attachments, setAttachments] = React.useState<AttachmentDraft[]>([]);
   const [receipt, setReceipt] = React.useState<{
     anonId: string;
@@ -84,29 +105,37 @@ export default function NewComplaint({
     emergencyResources: string[];
   } | null>(null);
   const [keepIdentityHidden, setKeepIdentityHidden] = React.useState(true);
-  const [incidentPickerMode, setIncidentPickerMode] = React.useState<'date' | 'time' | null>(null);
-  const [incidentPickerValue, setIncidentPickerValue] = React.useState(new Date());
+  const [incidentPickerMode, setIncidentPickerMode] = React.useState<
+    "date" | "time" | null
+  >(null);
+  const [incidentPickerValue, setIncidentPickerValue] = React.useState(
+    new Date(),
+  );
   const createMutation = useCreateComplaintMutation();
 
   const form = useForm<CreateComplaintFormValues>({
     resolver: zodResolver(createComplaintSchema as any),
     defaultValues: {
-      title: '',
-      category: 'harassment',
-      description: '',
-      locationText: '',
-      incidentAt: '',
-      peopleInvolved: '',
+      title: "",
+      category: "harassment",
+      description: "",
+      locationText: "",
+      incidentAt: "",
+      peopleInvolved: "",
       consent: false,
     },
   });
 
   const values = form.watch();
-  const severityPreview = classifySeverity(`${values.title} ${values.description}`);
+  const severityPreview = classifySeverity(
+    `${values.title} ${values.description}`,
+  );
 
   const openIncidentPicker = React.useCallback((currentValue?: string) => {
-    setIncidentPickerValue(parseIncidentValue(currentValue));
-    setIncidentPickerMode('date');
+    const parsed = parseIncidentValue(currentValue);
+    const now = new Date();
+    setIncidentPickerValue(parsed > now ? now : parsed);
+    setIncidentPickerMode("date");
   }, []);
 
   const handleIncidentPickerChange = React.useCallback(
@@ -115,20 +144,31 @@ export default function NewComplaint({
       event: DateTimePickerEvent,
       selectedDate?: Date,
     ) => {
-      if (event.type === 'dismissed') {
+      if (event.type === "dismissed") {
         setIncidentPickerMode(null);
         return;
       }
 
-      const nextValue = selectedDate ?? incidentPickerValue;
-      setIncidentPickerValue(nextValue);
+      const now = new Date();
+      let nextValue = selectedDate ?? incidentPickerValue;
 
-      if (incidentPickerMode === 'date') {
-        setIncidentPickerMode('time');
+      if (incidentPickerMode === "date") {
+        const safeDate = nextValue > now ? now : nextValue;
+        setIncidentPickerValue(safeDate);
+        setIncidentPickerMode("time");
         return;
       }
 
+      if (isSameDay(incidentPickerValue, now) && nextValue > now) {
+        nextValue = now;
+      }
+
+      if (nextValue > now) {
+        nextValue = now;
+      }
+
       onChange(nextValue.toISOString());
+      setIncidentPickerValue(nextValue);
       setIncidentPickerMode(null);
     },
     [incidentPickerMode, incidentPickerValue],
@@ -137,11 +177,14 @@ export default function NewComplaint({
   const handleCopy = async (value: string, label: string) => {
     const clipboard = getClipboard();
     if (!clipboard) {
-      Alert.alert('Clipboard unavailable', `${label} could not be copied on this build.`);
+      Alert.alert(
+        "Clipboard unavailable",
+        `${label} could not be copied on this build.`,
+      );
       return;
     }
     await clipboard.setStringAsync(value);
-    Alert.alert(`${label} copied`, 'Store it somewhere safe outside the app.');
+    Alert.alert(`${label} copied`, "Store it somewhere safe outside the app.");
   };
 
   const handleShare = async () => {
@@ -154,15 +197,48 @@ export default function NewComplaint({
         message: `Anonymous complaint receipt\nAnonymous ID: ${receipt.anonId}\nSecret: ${receipt.secret}\nThis secret cannot be recovered if lost.`,
       });
     } catch {
-      Alert.alert('Share unavailable', 'Please save the Anonymous ID and secret manually.');
+      Alert.alert(
+        "Share unavailable",
+        "Please save the Anonymous ID and secret manually.",
+      );
     }
   };
 
   const handleSubmit = form.handleSubmit(async (payload) => {
+    const now = new Date();
+    const trimmedTitle = payload.title.trim();
+
+    if (!trimmedTitle) {
+      form.setError("title", { type: "manual", message: "Title is required." });
+      return;
+    }
+
+    if (!isValidTitle(trimmedTitle)) {
+      form.setError("title", {
+        type: "manual",
+        message: "Title can contain letters and spaces only.",
+      });
+      return;
+    }
+
+    if (payload.incidentAt) {
+      const incidentDate = new Date(payload.incidentAt);
+      if (!Number.isNaN(incidentDate.getTime()) && incidentDate > now) {
+        form.setError("incidentAt", {
+          type: "manual",
+          message: "Future date and time cannot be selected.",
+        });
+        return;
+      }
+    }
+
     const result = await createMutation.mutateAsync({
       ...payload,
+      title: trimmedTitle,
       attachments,
     });
+
+    await notifyComplaintSubmitted(trimmedTitle);
 
     setReceipt({
       anonId: result.anonId,
@@ -175,17 +251,22 @@ export default function NewComplaint({
 
   if (receipt) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
-        <ScrollView style={styles.screen} contentContainerStyle={styles.contentContainer}>
+      <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
+        <ScrollView
+          style={styles.screen}
+          contentContainerStyle={styles.contentContainer}>
           <View style={styles.heroCard}>
             <Text style={styles.eyebrow}>Store these safely</Text>
-            <Text style={styles.heroTitle}>Your anonymous complaint was submitted.</Text>
+            <Text style={styles.heroTitle}>
+              Your anonymous complaint was submitted.
+            </Text>
             <Text style={styles.heroSubtitle}>
-              This secret is shown once. The app cannot recover it after you leave this screen.
+              This secret is shown once. The app cannot recover it after you
+              leave this screen.
             </Text>
           </View>
 
-          {receipt.severity === 'CRITICAL' ? (
+          {receipt.severity === "CRITICAL" ? (
             <View style={{ marginTop: 16 }}>
               <EmergencyBanner resources={receipt.emergencyResources} />
             </View>
@@ -198,8 +279,7 @@ export default function NewComplaint({
             </Text>
             <Pressable
               style={styles.inlineAction}
-              onPress={() => handleCopy(receipt.anonId, 'Anonymous ID')}
-            >
+              onPress={() => handleCopy(receipt.anonId, "Anonymous ID")}>
               <Text style={styles.inlineActionText}>Copy ID</Text>
             </Pressable>
 
@@ -209,35 +289,38 @@ export default function NewComplaint({
             </Text>
             <Pressable
               style={styles.inlineAction}
-              onPress={() => handleCopy(receipt.secret, 'Secret')}
-            >
+              onPress={() => handleCopy(receipt.secret, "Secret")}>
               <Text style={styles.inlineActionText}>Copy secret</Text>
             </Pressable>
 
             <View style={styles.badgeRow}>
               <StatusBadge
                 label={receipt.severity}
-                tone={receipt.severity === 'CRITICAL' ? 'critical' : 'accent'}
+                tone={receipt.severity === "CRITICAL" ? "critical" : "accent"}
               />
               <StatusBadge label={getCategoryLabel(values.category)} />
             </View>
 
             <Text style={styles.warningText}>
-              This secret cannot be recovered if lost. Save it outside the app before leaving.
+              This secret cannot be recovered if lost. Save it outside the app
+              before leaving.
             </Text>
 
-            <Pressable style={[styles.button, styles.primaryButton]} onPress={handleShare}>
+            <Pressable
+              style={[styles.button, styles.primaryButton]}
+              onPress={handleShare}>
               <Text style={styles.primaryButtonText}>Share receipt</Text>
             </Pressable>
             <Pressable
               style={[styles.button, styles.secondaryButton]}
               onPress={() =>
-                navigation.replace('ComplaintDetails', {
+                navigation.replace("ComplaintDetails", {
                   caseId: receipt.complaintId,
                 })
-              }
-            >
-              <Text style={styles.secondaryButtonText}>Open complaint details</Text>
+              }>
+              <Text style={styles.secondaryButtonText}>
+                Open complaint details
+              </Text>
             </Pressable>
           </View>
         </ScrollView>
@@ -246,18 +329,19 @@ export default function NewComplaint({
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+    <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
       <KeyboardAvoidingView
         style={styles.screen}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+        behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView contentContainerStyle={styles.contentContainer}>
           <View style={styles.heroCard}>
             <Text style={styles.eyebrow}>Anonymous reporting</Text>
-            <Text style={styles.heroTitle}>Create a complaint without identifying yourself.</Text>
+            <Text style={styles.heroTitle}>
+              Create a complaint without identifying yourself.
+            </Text>
             <Text style={styles.heroSubtitle}>
-              Names, email addresses, and student IDs are not required. Only share what staff need
-              to act.
+              Names, email addresses, and student IDs are not required. Only
+              share what staff need to act.
             </Text>
           </View>
 
@@ -284,7 +368,15 @@ export default function NewComplaint({
               render={({ field }) => (
                 <TextInput
                   value={field.value}
-                  onChangeText={field.onChange}
+                  onChangeText={(text) => {
+                    const cleaned = text
+                      .replace(/[^A-Za-z\s]/g, "")
+                      .replace(/\s{2,}/g, " ");
+                    field.onChange(cleaned);
+                    if (form.formState.errors.title) {
+                      form.clearErrors("title");
+                    }
+                  }}
                   placeholder="Short summary of what happened"
                   placeholderTextColor="#98A2B3"
                   style={styles.input}
@@ -312,17 +404,19 @@ export default function NewComplaint({
             <View style={styles.badgeRow}>
               <StatusBadge
                 label={`Severity preview: ${severityPreview}`}
-                tone={severityPreview === 'CRITICAL' ? 'critical' : 'neutral'}
+                tone={severityPreview === "CRITICAL" ? "critical" : "neutral"}
               />
             </View>
 
-            {severityPreview === 'CRITICAL' ? (
+            {severityPreview === "CRITICAL" ? (
               <View style={{ marginTop: 12 }}>
                 <EmergencyBanner />
               </View>
             ) : null}
 
-            <Text style={[styles.label, styles.spacedLabel]}>Optional location</Text>
+            <Text style={[styles.label, styles.spacedLabel]}>
+              Optional location
+            </Text>
             <Controller
               control={form.control}
               name="locationText"
@@ -337,7 +431,9 @@ export default function NewComplaint({
               )}
             />
 
-            <Text style={[styles.label, styles.spacedLabel]}>Optional incident time</Text>
+            <Text style={[styles.label, styles.spacedLabel]}>
+              Optional incident time
+            </Text>
             <Controller
               control={form.control}
               name="incidentAt"
@@ -346,19 +442,23 @@ export default function NewComplaint({
                   <View style={styles.inlineFieldRow}>
                     <Pressable
                       style={[styles.input, styles.pickerInput]}
-                      onPress={() => openIncidentPicker(field.value)}
-                    >
+                      onPress={() => openIncidentPicker(field.value)}>
                       <Text
-                        style={field.value ? styles.pickerValueText : styles.pickerPlaceholderText}
-                      >
+                        style={
+                          field.value
+                            ? styles.pickerValueText
+                            : styles.pickerPlaceholderText
+                        }>
                         {formatIncidentValue(field.value)}
                       </Text>
                     </Pressable>
                     {field.value ? (
                       <Pressable
                         style={styles.clearInlineAction}
-                        onPress={() => field.onChange('')}
-                      >
+                        onPress={() => {
+                          field.onChange("");
+                          form.clearErrors("incidentAt");
+                        }}>
                         <Text style={styles.clearInlineActionText}>Clear</Text>
                       </Pressable>
                     ) : null}
@@ -367,9 +467,16 @@ export default function NewComplaint({
                     <DateTimePicker
                       value={incidentPickerValue}
                       mode={incidentPickerMode}
-                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                      display={Platform.OS === "ios" ? "spinner" : "default"}
+                      maximumDate={
+                        incidentPickerMode === "date" ? new Date() : undefined
+                      }
                       onChange={(event, selectedDate) =>
-                        handleIncidentPickerChange(field.onChange, event, selectedDate)
+                        handleIncidentPickerChange(
+                          field.onChange,
+                          event,
+                          selectedDate,
+                        )
                       }
                     />
                   ) : null}
@@ -377,7 +484,9 @@ export default function NewComplaint({
               )}
             />
 
-            <Text style={[styles.label, styles.spacedLabel]}>People involved</Text>
+            <Text style={[styles.label, styles.spacedLabel]}>
+              People involved
+            </Text>
             <Controller
               control={form.control}
               name="peopleInvolved"
@@ -392,21 +501,27 @@ export default function NewComplaint({
               )}
             />
 
-            <EvidenceUploader attachments={attachments} onChange={setAttachments} />
+            <EvidenceUploader
+              attachments={attachments}
+              onChange={setAttachments}
+            />
 
             <View style={styles.toggleRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.label}>Keep my identity hidden</Text>
                 <Text style={styles.helpText}>
-                  Anonymous complaints never ask for your student identity. Leave this on unless you
-                  later choose to disclose contact details voluntarily.
+                  Anonymous complaints never ask for your student identity.
+                  Leave this on unless you later choose to disclose contact
+                  details voluntarily.
                 </Text>
               </View>
               <Switch
                 value={keepIdentityHidden}
                 onValueChange={setKeepIdentityHidden}
-                trackColor={{ false: '#D0D5DD', true: '#FCC9AE' }}
-                thumbColor={keepIdentityHidden ? complaintsTheme.colors.accent : '#FFFFFF'}
+                trackColor={{ false: "#D0D5DD", true: "#FCC9AE" }}
+                thumbColor={
+                  keepIdentityHidden ? complaintsTheme.colors.accent : "#FFFFFF"
+                }
               />
             </View>
 
@@ -414,45 +529,65 @@ export default function NewComplaint({
               control={form.control}
               name="consent"
               render={({ field }) => (
-                <Pressable style={styles.consentRow} onPress={() => field.onChange(!field.value)}>
-                  <View style={[styles.checkbox, field.value && styles.checkboxActive]} />
+                <Pressable
+                  style={styles.consentRow}
+                  onPress={() => field.onChange(!field.value)}>
+                  <View
+                    style={[
+                      styles.checkbox,
+                      field.value && styles.checkboxActive,
+                    ]}
+                  />
                   <Text style={styles.helpText}>
-                    I confirm this report is accurate to the best of my knowledge, and I understand
-                    emergency support should be contacted first if there is immediate danger.
+                    I confirm this report is accurate to the best of my
+                    knowledge, and I understand emergency support should be
+                    contacted first if there is immediate danger.
                   </Text>
                 </Pressable>
               )}
             />
 
             {form.formState.errors.title?.message ? (
-              <Text style={styles.errorText}>{form.formState.errors.title.message}</Text>
+              <Text style={styles.errorText}>
+                {form.formState.errors.title.message}
+              </Text>
             ) : null}
             {form.formState.errors.description?.message ? (
-              <Text style={styles.errorText}>{form.formState.errors.description.message}</Text>
+              <Text style={styles.errorText}>
+                {form.formState.errors.description.message}
+              </Text>
+            ) : null}
+            {form.formState.errors.incidentAt?.message ? (
+              <Text style={styles.errorText}>
+                {form.formState.errors.incidentAt.message}
+              </Text>
             ) : null}
             {form.formState.errors.consent?.message ? (
-              <Text style={styles.errorText}>{form.formState.errors.consent.message}</Text>
+              <Text style={styles.errorText}>
+                {form.formState.errors.consent.message}
+              </Text>
             ) : null}
             {createMutation.isError ? (
               <Text style={styles.errorText}>
-                {(createMutation.error as Error).message || 'Could not submit complaint.'}
+                {(createMutation.error as Error).message ||
+                  "Could not submit complaint."}
               </Text>
             ) : null}
 
             <View style={styles.actionRow}>
               <Pressable
                 style={[styles.button, styles.secondaryButton]}
-                onPress={() => navigation.goBack()}
-              >
+                onPress={() => navigation.goBack()}>
                 <Text style={styles.secondaryButtonText}>Cancel</Text>
               </Pressable>
               <Pressable
                 style={[styles.button, styles.primaryButton]}
                 onPress={handleSubmit}
-                disabled={createMutation.isPending}
-              >
+                disabled={createMutation.isPending}>
                 <Text style={styles.primaryButtonText}>
-                  {createMutation.isPending ? 'Submitting...' : 'Submit complaint'}
+                  {createMutation.isPending
+                    ? "Submitting..."
+                    : "Submit complaint"}
                 </Text>
               </Pressable>
             </View>
@@ -484,23 +619,23 @@ const styles = StyleSheet.create({
   },
   eyebrow: {
     fontSize: 11,
-    fontWeight: '700',
-    color: '#CCE2E8',
+    fontWeight: "700",
+    color: "#CCE2E8",
     letterSpacing: 0.8,
-    textTransform: 'uppercase',
+    textTransform: "uppercase",
   },
   heroTitle: {
     marginTop: 8,
     fontSize: 24,
     lineHeight: 30,
-    fontWeight: '700',
-    color: '#FFFFFF',
+    fontWeight: "700",
+    color: "#FFFFFF",
   },
   heroSubtitle: {
     marginTop: 8,
     fontSize: 14,
     lineHeight: 21,
-    color: '#DCEEF2',
+    color: "#DCEEF2",
   },
   sectionCard: {
     marginTop: 16,
@@ -512,12 +647,12 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: "700",
     color: complaintsTheme.colors.text,
   },
   label: {
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: "700",
     color: complaintsTheme.colors.primary,
   },
   spacedLabel: {
@@ -532,20 +667,20 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 14,
     color: complaintsTheme.colors.text,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
   },
   multilineInput: {
     minHeight: 132,
   },
   inlineFieldRow: {
     marginTop: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 10,
   },
   pickerInput: {
     flex: 1,
-    justifyContent: 'center',
+    justifyContent: "center",
   },
   pickerValueText: {
     fontSize: 14,
@@ -553,12 +688,12 @@ const styles = StyleSheet.create({
   },
   pickerPlaceholderText: {
     fontSize: 14,
-    color: '#98A2B3',
+    color: "#98A2B3",
   },
   clearInlineAction: {
     borderWidth: 1,
     borderColor: complaintsTheme.colors.line,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
     borderRadius: complaintsTheme.radius.pill,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -566,18 +701,18 @@ const styles = StyleSheet.create({
   clearInlineActionText: {
     color: complaintsTheme.colors.primary,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: "700",
   },
   badgeRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
     marginTop: 12,
   },
   toggleRow: {
     marginTop: 18,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 16,
   },
   helpText: {
@@ -588,9 +723,9 @@ const styles = StyleSheet.create({
   },
   consentRow: {
     marginTop: 18,
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 12,
-    alignItems: 'flex-start',
+    alignItems: "flex-start",
   },
   checkbox: {
     marginTop: 4,
@@ -599,7 +734,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 1,
     borderColor: complaintsTheme.colors.line,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
   },
   checkboxActive: {
     backgroundColor: complaintsTheme.colors.accent,
@@ -609,17 +744,17 @@ const styles = StyleSheet.create({
     marginTop: 12,
     color: complaintsTheme.colors.accent,
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   actionRow: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 12,
     marginTop: 20,
   },
   button: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     borderRadius: complaintsTheme.radius.pill,
     paddingVertical: 13,
   },
@@ -629,27 +764,27 @@ const styles = StyleSheet.create({
   secondaryButton: {
     borderWidth: 1,
     borderColor: complaintsTheme.colors.primary,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
   },
   primaryButtonText: {
-    color: '#FFFFFF',
+    color: "#FFFFFF",
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: "700",
   },
   secondaryButtonText: {
     color: complaintsTheme.colors.primary,
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: "700",
   },
   codeText: {
     marginTop: 8,
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: "700",
     color: complaintsTheme.colors.text,
   },
   inlineAction: {
     marginTop: 10,
-    alignSelf: 'flex-start',
+    alignSelf: "flex-start",
     borderRadius: complaintsTheme.radius.pill,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -658,7 +793,7 @@ const styles = StyleSheet.create({
   inlineActionText: {
     color: complaintsTheme.colors.primary,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: "700",
   },
   warningText: {
     marginTop: 16,

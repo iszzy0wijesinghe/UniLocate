@@ -1,3 +1,5 @@
+/** @format */
+
 import { API_BASE_URL } from "./baseUrl";
 
 export type Zone = {
@@ -10,13 +12,32 @@ export type Zone = {
   };
 };
 
+export type OccupancyZone = {
+  id: string;
+  name: string;
+  type: string;
+  polygon_geojson: {
+    type: "Polygon" | "MultiPolygon";
+    coordinates: any;
+  };
+  display_name: string;
+  capacity: number;
+  description: string;
+  current_count: number;
+  status: string;
+  area_group: string;
+  capacity_mode: string;
+};
+
 export type LocationEventPayload = {
   userId: string;
+  deviceId: string;
   lat: number;
   lng: number;
   accuracyM?: number;
   matchedZoneId?: string | null;
   eventType: "PING" | "ENTER" | "EXIT";
+  appState?: "foreground" | "background";
 };
 
 export type Boundary = {
@@ -36,14 +57,6 @@ export async function fetchBoundary(): Promise<Boundary> {
   return res.json();
 }
 
-export async function fetchZones(): Promise<Zone[]> {
-  const res = await fetch(`${API_BASE_URL}/zones`);
-  if (!res.ok) {
-    throw new Error("Failed to fetch zones");
-  }
-  return res.json();
-}
-
 export async function sendLocationEvent(payload: LocationEventPayload) {
   const res = await fetch(`${API_BASE_URL}/events/location`, {
     method: "POST",
@@ -54,12 +67,30 @@ export async function sendLocationEvent(payload: LocationEventPayload) {
   });
 
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Failed to send location event: ${text}`);
+    const text = await res.text();
+    throw new Error(text || "Failed to send location event");
   }
 
   return res.json();
 }
+
+export async function fetchZones(): Promise<Zone[]> {
+  const res = await fetch(`${API_BASE_URL}/zones`);
+  if (!res.ok) {
+    throw new Error("Failed to fetch zones");
+  }
+  return res.json();
+}
+
+export async function fetchOccupancyZones(): Promise<OccupancyZone[]> {
+  const res = await fetch(`${API_BASE_URL}/zones/occupancy`);
+  if (!res.ok) {
+    throw new Error("Failed to fetch occupancy zones");
+  }
+  return res.json();
+}
+
+
 
 export async function fetchLiveZoneCounts() {
   const res = await fetch(`${API_BASE_URL}/zones/live`);

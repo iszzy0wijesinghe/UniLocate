@@ -2,18 +2,27 @@
 
 import React from "react";
 import {
+  Alert,
   Image,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 
 import type { SettingsStackParamList } from "../../navigation/SettingsNavigator";
+import {
+  clearTemporaryCache,
+  exportAppData,
+  formatBytes,
+  getAppStorageSnapshot,
+  importAppData,
+} from "./storageTools";
 
 type Props = NativeStackScreenProps<SettingsStackParamList, "Storage">;
 
@@ -36,23 +45,158 @@ type ActionCardProps = {
   title: string;
   subtitle: string;
   onPress?: () => void;
+  danger?: boolean;
+  loading?: boolean;
 };
 
-function ActionCard({ icon, title, subtitle, onPress }: ActionCardProps) {
+function ActionCard({
+  icon,
+  title,
+  subtitle,
+  onPress,
+  danger,
+  loading,
+}: ActionCardProps) {
   return (
-    <Pressable style={styles.actionCard} onPress={onPress}>
-      <View style={styles.actionIconWrap}>{icon}</View>
+    <Pressable
+      style={[styles.actionCard, danger && styles.actionCardDanger]}
+      onPress={onPress}
+      disabled={loading}>
+      <View
+        style={[
+          styles.actionIconWrap,
+          danger && styles.actionIconWrapDanger,
+        ]}>
+        {loading ? <ActivityIndicator size="small" color="#053668" /> : icon}
+      </View>
+
       <View style={styles.actionTextWrap}>
-        <Text style={styles.actionTitle}>{title}</Text>
+        <Text style={[styles.actionTitle, danger && styles.actionTitleDanger]}>
+          {title}
+        </Text>
         <Text style={styles.actionSubtitle}>{subtitle}</Text>
       </View>
+
       <Ionicons name="chevron-forward" size={18} color="#98A2B3" />
     </Pressable>
   );
 }
 
 export default function Storage({ navigation }: Props) {
-  const totalUsedPercent = 42;
+  const [loading, setLoading] = React.useState(true);
+  const [busyAction, setBusyAction] = React.useState<
+    "export" | "import" | "clear" | null
+  >(null);
+
+  const [snapshot, setSnapshot] = React.useState({
+    totalBytes: 0,
+    totalKeys: 0,
+    locationLogsCount: 0,
+    chatCacheCount: 0,
+    complaintSessionCount: 0,
+  });
+
+  const loadSnapshot = React.useCallback(async () => {
+    try {
+      setLoading(true);
+      const next = await getAppStorageSnapshot();
+      setSnapshot({
+        totalBytes: next.totalBytes,
+        totalKeys: next.totalKeys,
+        locationLogsCount: next.locationLogsCount,
+        chatCacheCount: next.chatCacheCount,
+        complaintSessionCount: next.complaintSessionCount,
+      });
+    } catch (error: any) {
+      Alert.alert(
+        "Storage error",
+        error?.message || "Failed to load storage details.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    loadSnapshot();
+  }, [loadSnapshot]);
+
+  const totalUsedPercent = Math.min(
+    100,
+    Math.max(6, Math.round((snapshot.totalBytes / (25 * 1024 * 1024)) * 100)),
+  );
+
+  const handleExport = async () => {
+    try {
+      setBusyAction("export");
+      await exportAppData();
+      Alert.alert(
+        "Export ready",
+        "Your UniLocate backup file was prepared and shared successfully.",
+      );
+    } catch (error: any) {
+      Alert.alert("Export failed", error?.message || "Could not export data.");
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleImport = async () => {
+    try {
+      setBusyAction("import");
+      const result = await importAppData();
+
+      if (result.skipped) {
+        setBusyAction(null);
+        return;
+      }
+
+      await loadSnapshot();
+
+      Alert.alert(
+        "Import completed",
+        // `${result.imported} saved storage entries were restored successfully.`,
+        `Backup restored successfully.`,
+      );
+    } catch (error: any) {
+      Alert.alert("Import failed", error?.message || "Could not import backup.");
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleClearCache = () => {
+    Alert.alert(
+      "Clear cached local data?",
+      "This will remove saved location logs, cached chat data, and complaint session cache stored on this device. Profile-related account data will not be removed.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setBusyAction("clear");
+              const removedCount = await clearTemporaryCache();
+              await loadSnapshot();
+
+              Alert.alert(
+                "Cache cleared",
+                `${removedCount} cached storage entries were removed successfully.`,
+              );
+            } catch (error: any) {
+              Alert.alert(
+                "Clear failed",
+                error?.message || "Could not clear cached data.",
+              );
+            } finally {
+              setBusyAction(null);
+            }
+          },
+        },
+      ],
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["top", "bottom"]}>
@@ -66,7 +210,9 @@ export default function Storage({ navigation }: Props) {
         </View>
 
         <View style={styles.headerRow}>
-          <Pressable style={styles.backButton} onPress={() => navigation.goBack()}>
+          <Pressable
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}>
             <Ionicons name="arrow-back" size={20} color="#053668" />
           </Pressable>
           <Text style={styles.headerTitle}>Storage</Text>
@@ -86,8 +232,8 @@ export default function Storage({ navigation }: Props) {
             <Text style={styles.eyebrow}>App data</Text>
             <Text style={styles.heroTitle}>Manage saved storage usage</Text>
             <Text style={styles.heroSubtitle}>
-              View how much space UniLocate uses for app content, cached map data,
-              and saved local information.
+              View how much space UniLocate uses for local logs, complaint
+              sessions, and cached chat data saved on this device.
             </Text>
           </View>
         </View>
@@ -95,17 +241,47 @@ export default function Storage({ navigation }: Props) {
         <View style={styles.sectionCard}>
           <Text style={styles.sectionLabel}>Usage overview</Text>
 
-          <Text style={styles.bigValue}>42 MB</Text>
-          <Text style={styles.bigValueHint}>Estimated space used on this device</Text>
+          {loading ? (
+            <View style={styles.loadingBox}>
+              <ActivityIndicator size="small" color="#053668" />
+              <Text style={styles.loadingBoxText}>Loading storage data...</Text>
+            </View>
+          ) : (
+            <>
+              <Text style={styles.bigValue}>
+                {formatBytes(snapshot.totalBytes)}
+              </Text>
+              <Text style={styles.bigValueHint}>
+                Local UniLocate data currently stored on this device
+              </Text>
 
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${totalUsedPercent}%` }]} />
-          </View>
+              <View style={styles.progressTrack}>
+                <View
+                  style={[
+                    styles.progressFill,
+                    { width: `${totalUsedPercent}%` },
+                  ]}
+                />
+              </View>
 
-          <UsageRow label="Cached map data" value="18 MB" />
-          <UsageRow label="Saved complaint sessions" value="8 MB" />
-          <UsageRow label="Lost & found media" value="10 MB" />
-          <UsageRow label="Temporary app cache" value="6 MB" />
+              <UsageRow
+                label="Saved location logs"
+                value={`${snapshot.locationLogsCount} items`}
+              />
+              <UsageRow
+                label="Cached Lost & Found chats"
+                value={`${snapshot.chatCacheCount} items`}
+              />
+              <UsageRow
+                label="Saved complaint sessions"
+                value={`${snapshot.complaintSessionCount} items`}
+              />
+              <UsageRow
+                label="Tracked local storage keys"
+                value={`${snapshot.totalKeys} keys`}
+              />
+            </>
+          )}
         </View>
 
         <View style={styles.sectionCard}>
@@ -114,27 +290,35 @@ export default function Storage({ navigation }: Props) {
           <ActionCard
             icon={<Ionicons name="download-outline" size={20} color="#053668" />}
             title="Export data"
-            subtitle="Prepare saved app data for backup or review"
+            subtitle="Create an encrypted UniLocate backup file for this app"
+            onPress={handleExport}
+            loading={busyAction === "export"}
           />
 
           <ActionCard
             icon={<Ionicons name="cloud-upload-outline" size={20} color="#053668" />}
             title="Import data"
-            subtitle="Restore previously exported local app data"
+            subtitle="Restore a previously exported UniLocate backup file"
+            onPress={handleImport}
+            loading={busyAction === "import"}
           />
 
           <ActionCard
             icon={<Ionicons name="trash-outline" size={20} color="#C2410C" />}
             title="Clear temporary cache"
-            subtitle="Remove cached content without affecting core profile data"
+            subtitle="Remove saved logs, complaint sessions, and chat cache from this device"
+            onPress={handleClearCache}
+            danger
+            loading={busyAction === "clear"}
           />
         </View>
 
         <View style={styles.infoCard}>
-          <Text style={styles.infoTitle}>Note</Text>
+          <Text style={styles.infoTitle}>Important</Text>
           <Text style={styles.infoText}>
-            These values are currently placeholder UI values for the settings flow.
-            Real storage totals can be connected later when the feature logic is finalized.
+            Exported backups are encrypted for UniLocate import use. Clearing
+            cached local data may remove saved location logs, complaint session
+            history, and Lost & Found chat cache from this device.
           </Text>
         </View>
       </ScrollView>
@@ -284,6 +468,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
   },
+  actionCardDanger: {},
   actionIconWrap: {
     width: 42,
     height: 42,
@@ -293,6 +478,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginRight: 12,
   },
+  actionIconWrapDanger: {
+    backgroundColor: "#FFF1F2",
+  },
   actionTextWrap: {
     flex: 1,
     marginRight: 10,
@@ -301,6 +489,9 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     color: "#111827",
+  },
+  actionTitleDanger: {
+    color: "#C2410C",
   },
   actionSubtitle: {
     marginTop: 4,
@@ -326,5 +517,16 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     color: "#9A3412",
+  },
+  loadingBox: {
+    paddingVertical: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loadingBoxText: {
+    marginTop: 8,
+    fontSize: 13,
+    color: "#667085",
+    fontWeight: "600",
   },
 });

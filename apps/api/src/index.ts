@@ -1,18 +1,327 @@
-import express, { type Request, type Response } from "express";
+/** @format */
+
+import express, {
+  type Request,
+  type Response,
+  type RequestHandler,
+} from "express";
 import cors from "cors";
 import "dotenv/config";
 import crypto from "crypto";
-import fs from "fs";
-import path from "path";
-import multer from "multer";
 import { z } from "zod";
 import { pool } from "./db";
+import bcrypt from "bcryptjs";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 
 const app = express();
+
+const complaintUploadsDir = path.join(process.cwd(), "uploads", "complaints");
+fs.mkdirSync(complaintUploadsDir, { recursive: true });
+
+const complaintStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, complaintUploadsDir),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `${crypto.randomUUID()}${ext}`);
+  },
+});
+
+const upload = multer({ storage: complaintStorage });
+
+const lostFoundUploadsDir = path.join(process.cwd(), "uploads", "lost-found");
+fs.mkdirSync(lostFoundUploadsDir, { recursive: true });
+
+const lostFoundStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, lostFoundUploadsDir),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `${crypto.randomUUID()}${ext}`);
+  },
+});
+
+const lostFoundUpload = multer({ storage: lostFoundStorage });
+
+const eduHubUploadsDir = path.join(process.cwd(), "uploads", "eduhub");
+fs.mkdirSync(eduHubUploadsDir, { recursive: true });
+
+const eduHubStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, eduHubUploadsDir),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `${crypto.randomUUID()}${ext}`);
+  },
+});
+
+const eduHubUpload = multer({
+  storage: eduHubStorage,
+  limits: {
+    fileSize: 15 * 1024 * 1024,
+  },
+  fileFilter: (_req, file, cb) => {
+    const allowedMimeTypes = [
+      "application/pdf",
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/webp",
+    ];
+
+    if (allowedMimeTypes.includes(file.mimetype)) {
+      cb(null, true);
+      return;
+    }
+
+    cb(new Error("Only PDF and image files are allowed"));
+  },
+});
 
 // IMPORTANT: increase JSON limit for polygons
 app.use(express.json({ limit: "10mb" }));
 app.use(cors());
+app.use("/uploads/complaints", express.static(complaintUploadsDir));
+app.use("/uploads/lost-found", express.static(lostFoundUploadsDir));
+app.use("/uploads/eduhub", express.static(eduHubUploadsDir));
+
+function getOccupancyStatus(currentCount: number, capacity: number) {
+  if (!capacity || capacity <= 0) return "Unknown";
+
+  const ratio = currentCount / capacity;
+
+  if (ratio >= 0.8) return "Crowded";
+  if (ratio >= 0.4) return "Almost Full";
+  if (ratio > 0) return "Available";
+  return "Free";
+}
+
+const RegisterUserSchema = z
+  .object({
+    username: z
+      .string()
+      .min(3)
+      .max(24)
+      .regex(
+        /^[A-Za-z0-9_]+$/,
+        "Only letters, numbers, and underscore are allowed",
+      ),
+    password: z.string().min(8),
+    confirmPassword: z.string().min(8),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+  });
+
+const LoginUserSchema = z.object({
+  username: z
+    .string()
+    .min(3)
+    .max(24)
+    .regex(
+      /^[A-Za-z0-9_]+$/,
+      "Only letters, numbers, and underscore are allowed",
+    ),
+  password: z.string().min(1),
+});
+
+const CheckUsernameSchema = z.object({
+  username: z.string().min(3).max(24),
+});
+
+const UpdateAccountSchema = z.object({
+  userId: z.string().min(1),
+  username: z
+    .string()
+    .min(3)
+    .max(24)
+    .regex(
+      /^[A-Za-z0-9_]+$/,
+      "Only letters, numbers, and underscore are allowed",
+    ),
+});
+
+function normalizeNamePart(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ".")
+    .replace(/^\.+|\.+$/g, "");
+}
+
+function buildAdminEmail(firstName: string, lastName: string) {
+  const first = normalizeNamePart(firstName);
+  const last = normalizeNamePart(lastName);
+  return `${first}.${last}@unilocateadmin.com`;
+}
+
+const ResetPasswordSchema = z
+  .object({
+    userId: z.string().min(1),
+    currentPassword: z.string().min(1),
+    newPassword: z.string().min(8),
+    confirmPassword: z.string().min(8),
+  })
+  .refine((data) => data.newPassword === data.confirmPassword, {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+  })
+  .refine((data) => /[A-Z]/.test(data.newPassword), {
+    message: "Password must contain at least one uppercase letter",
+    path: ["newPassword"],
+  })
+  .refine((data) => /[a-z]/.test(data.newPassword), {
+    message: "Password must contain at least one lowercase letter",
+    path: ["newPassword"],
+  })
+  .refine((data) => /[0-9]/.test(data.newPassword), {
+    message: "Password must contain at least one number",
+    path: ["newPassword"],
+  })
+  .refine((data) => /[^A-Za-z0-9]/.test(data.newPassword), {
+    message: "Password must contain at least one special character",
+    path: ["newPassword"],
+  });
+
+const AdminRegisterSchema = z
+  .object({
+    firstName: z
+      .string()
+      .min(2, "First name is required")
+      .max(100)
+      .regex(/^[A-Za-z ]+$/, "First name can contain letters and spaces only"),
+    lastName: z
+      .string()
+      .min(2, "Last name is required")
+      .max(100)
+      .regex(/^[A-Za-z ]+$/, "Last name can contain letters and spaces only"),
+    password: z
+      .string()
+      .min(8, "Password must be at least 8 characters")
+      .refine((value) => /[A-Z]/.test(value), {
+        message: "Password must contain at least one uppercase letter",
+      })
+      .refine((value) => /[a-z]/.test(value), {
+        message: "Password must contain at least one lowercase letter",
+      })
+      .refine((value) => /[0-9]/.test(value), {
+        message: "Password must contain at least one number",
+      })
+      .refine((value) => /[^A-Za-z0-9]/.test(value), {
+        message: "Password must contain at least one special character",
+      }),
+    confirmPassword: z.string().min(8),
+    roleKey: z.string().min(1),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+  });
+
+const AdminLoginSchema = z.object({
+  email: z.string().email("Valid email is required"),
+  password: z.string().min(1, "Password is required"),
+});
+
+const adminAvatarUploadsDir = path.join(
+  process.cwd(),
+  "uploads",
+  "admin-avatars",
+);
+fs.mkdirSync(adminAvatarUploadsDir, { recursive: true });
+
+const adminAvatarStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, adminAvatarUploadsDir),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `${crypto.randomUUID()}${ext}`);
+  },
+});
+
+const UpdateAdminUserSchema = z.object({
+  firstName: z
+    .string()
+    .min(2)
+    .max(100)
+    .regex(/^[A-Za-z ]+$/, "First name can contain letters and spaces only"),
+  lastName: z
+    .string()
+    .min(2)
+    .max(100)
+    .regex(/^[A-Za-z ]+$/, "Last name can contain letters and spaces only"),
+  roleKey: z.string().min(1),
+  isActive: z.boolean(),
+});
+
+const ResetAdminUserPasswordSchema = z
+  .object({
+    newPassword: z.string().min(8),
+    confirmPassword: z.string().min(8),
+  })
+  .refine((data) => data.newPassword === data.confirmPassword, {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+  })
+  .refine((data) => /[A-Z]/.test(data.newPassword), {
+    message: "Password must contain at least one uppercase letter",
+    path: ["newPassword"],
+  })
+  .refine((data) => /[a-z]/.test(data.newPassword), {
+    message: "Password must contain at least one lowercase letter",
+    path: ["newPassword"],
+  })
+  .refine((data) => /[0-9]/.test(data.newPassword), {
+    message: "Password must contain at least one number",
+    path: ["newPassword"],
+  })
+  .refine((data) => /[^A-Za-z0-9]/.test(data.newPassword), {
+    message: "Password must contain at least one special character",
+    path: ["newPassword"],
+  });
+
+const UpdateMyProfileSchema = z.object({
+  firstName: z
+    .string()
+    .min(2)
+    .max(100)
+    .regex(/^[A-Za-z ]+$/, "First name can contain letters and spaces only"),
+  lastName: z
+    .string()
+    .min(2)
+    .max(100)
+    .regex(/^[A-Za-z ]+$/, "Last name can contain letters and spaces only"),
+});
+
+const ChangeMyPasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1),
+    newPassword: z.string().min(8),
+    confirmPassword: z.string().min(8),
+  })
+  .refine((data) => data.newPassword === data.confirmPassword, {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+  })
+  .refine((data) => /[A-Z]/.test(data.newPassword), {
+    message: "Password must contain at least one uppercase letter",
+    path: ["newPassword"],
+  })
+  .refine((data) => /[a-z]/.test(data.newPassword), {
+    message: "Password must contain at least one lowercase letter",
+    path: ["newPassword"],
+  })
+  .refine((data) => /[0-9]/.test(data.newPassword), {
+    message: "Password must contain at least one number",
+    path: ["newPassword"],
+  })
+  .refine((data) => /[^A-Za-z0-9]/.test(data.newPassword), {
+    message: "Password must contain at least one special character",
+    path: ["newPassword"],
+  });
+
+const adminAvatarUpload = multer({ storage: adminAvatarStorage });
+
+app.use("/uploads/admin-avatars", express.static(adminAvatarUploadsDir));
 
 app.get("/health", async (_req: Request, res: Response) => {
   try {
@@ -23,13 +332,962 @@ app.get("/health", async (_req: Request, res: Response) => {
   }
 });
 
+app.post("/users/register", async (req: Request, res: Response) => {
+  const parsed = RegisterUserSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Invalid registration data",
+      error: parsed.error.flatten(),
+    });
+  }
+
+  const username = parsed.data.username.trim();
+  const password = parsed.data.password;
+
+  try {
+    const existing = await pool.query(
+      `
+      SELECT id, username
+      FROM users
+      WHERE LOWER(username) = LOWER($1)
+      LIMIT 1
+      `,
+      [username],
+    );
+
+    if (existing.rows.length > 0) {
+      return res.status(409).json({
+        message: "Username already exists",
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    const result = await pool.query(
+      `
+      INSERT INTO users (username, password_hash, created_at, updated_at)
+      VALUES ($1, $2, NOW(), NOW())
+      RETURNING id, username, created_at, updated_at
+      `,
+      [username, passwordHash],
+    );
+
+    const row = result.rows[0];
+
+    return res.status(201).json({
+      id: row.id,
+      username: row.username,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    });
+  } catch (e) {
+    console.error("DB error in POST /users/register:", e);
+    return res.status(503).json({
+      message: "Failed to register user",
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.post("/users/login", async (req: Request, res: Response) => {
+  const parsed = LoginUserSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Invalid login data",
+      error: parsed.error.flatten(),
+    });
+  }
+
+  const username = parsed.data.username.trim();
+  const password = parsed.data.password;
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT id, username, password_hash, created_at, updated_at
+      FROM users
+      WHERE LOWER(username) = LOWER($1)
+      LIMIT 1
+      `,
+      [username],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({
+        message: "Invalid username or password",
+      });
+    }
+
+    const user = result.rows[0];
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+
+    if (!isMatch) {
+      return res.status(401).json({
+        message: "Invalid username or password",
+      });
+    }
+
+    return res.json({
+      id: user.id,
+      username: user.username,
+      created_at: user.created_at,
+      updated_at: user.updated_at,
+    });
+  } catch (e) {
+    console.error("DB error in POST /users/login:", e);
+    return res.status(503).json({
+      message: "Failed to login",
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.get("/users/check-username", async (req: Request, res: Response) => {
+  const parsed = CheckUsernameSchema.safeParse({
+    username: String(req.query.username ?? ""),
+  });
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      available: false,
+      message: "Invalid username",
+    });
+  }
+
+  const username = parsed.data.username.trim();
+
+  if (!/^[A-Za-z0-9_]+$/.test(username)) {
+    return res.json({
+      available: false,
+      message: "Only letters, numbers, and underscore are allowed",
+    });
+  }
+
+  try {
+    const existing = await pool.query(
+      `
+      SELECT id
+      FROM users
+      WHERE LOWER(username) = LOWER($1)
+      LIMIT 1
+      `,
+      [username],
+    );
+
+    if (existing.rows.length > 0) {
+      return res.json({
+        available: false,
+        message: "Username already exists",
+      });
+    }
+
+    return res.json({
+      available: true,
+      message: "Username is available",
+    });
+  } catch (e) {
+    console.error("DB error in GET /users/check-username:", e);
+    return res.status(503).json({
+      available: false,
+      message: "Database unavailable",
+    });
+  }
+});
+
+app.patch("/users/update-account", async (req: Request, res: Response) => {
+  const parsed = UpdateAccountSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Invalid account update data",
+      error: parsed.error.flatten(),
+    });
+  }
+
+  const { userId, username } = parsed.data;
+  const trimmedUsername = username.trim();
+
+  try {
+    const existing = await pool.query(
+      `
+      SELECT id
+      FROM users
+      WHERE LOWER(username) = LOWER($1)
+        AND id <> $2
+      LIMIT 1
+      `,
+      [trimmedUsername, userId],
+    );
+
+    if (existing.rows.length > 0) {
+      return res.status(409).json({
+        message: "Username already exists",
+      });
+    }
+
+    const result = await pool.query(
+      `
+      UPDATE users
+      SET username = $1,
+          updated_at = NOW()
+      WHERE id = $2
+      RETURNING id, username, created_at, updated_at
+      `,
+      [trimmedUsername, userId],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    const row = result.rows[0];
+
+    return res.json({
+      id: row.id,
+      username: row.username,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    });
+  } catch (e) {
+    console.error("DB error in PATCH /users/update-account:", e);
+    return res.status(503).json({
+      message: "Failed to update account",
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.patch("/users/reset-password", async (req: Request, res: Response) => {
+  const parsed = ResetPasswordSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Invalid password reset data",
+      error: parsed.error.flatten(),
+    });
+  }
+
+  const { userId, currentPassword, newPassword } = parsed.data;
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT id, password_hash
+      FROM users
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [userId],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    const user = result.rows[0];
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
+
+    if (!isMatch) {
+      return res.status(401).json({
+        message: "Current password is incorrect",
+      });
+    }
+
+    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+
+    await pool.query(
+      `
+      UPDATE users
+      SET password_hash = $1,
+          updated_at = NOW()
+      WHERE id = $2
+      `,
+      [newPasswordHash, userId],
+    );
+
+    return res.json({
+      message: "Password reset successfully",
+    });
+  } catch (e) {
+    console.error("DB error in PATCH /users/reset-password:", e);
+    return res.status(503).json({
+      message: "Failed to reset password",
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.post("/admin/auth/register", async (req: Request, res: Response) => {
+  const parsed = AdminRegisterSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Invalid registration data",
+      error: parsed.error.flatten(),
+    });
+  }
+
+  const { firstName, lastName, password, roleKey } = parsed.data;
+  const cleanFirstName = firstName.trim();
+  const cleanLastName = lastName.trim();
+  const email = buildAdminEmail(cleanFirstName, cleanLastName);
+  const fullName = `${cleanFirstName} ${cleanLastName}`;
+
+  try {
+    const roleResult = await pool.query(
+      `
+      SELECT id, role_key, role_name
+      FROM admin_roles
+      WHERE role_key = $1
+      LIMIT 1
+      `,
+      [roleKey],
+    );
+
+    if (roleResult.rows.length === 0) {
+      return res.status(400).json({
+        message: "Invalid admin role",
+      });
+    }
+
+    const existingUser = await pool.query(
+      `
+      SELECT id
+      FROM admin_users
+      WHERE LOWER(email) = LOWER($1)
+      LIMIT 1
+      `,
+      [email],
+    );
+
+    if (existingUser.rows.length > 0) {
+      return res.status(409).json({
+        message: "Admin email already exists",
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const role = roleResult.rows[0];
+    const id = crypto.randomUUID();
+    const mustChangePassword = role.role_key !== "SUPER_ADMIN";
+
+    const result = await pool.query(
+      `
+      INSERT INTO admin_users (
+        id,
+        first_name,
+        last_name,
+        full_name,
+        email,
+        password_hash,
+        role_id,
+        is_active,
+        avatar_url,
+        must_change_password,
+        password_changed_at,
+        created_at,
+        updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,true,NULL,$8,NULL,NOW(),NOW())
+      RETURNING
+        id,
+        first_name,
+        last_name,
+        full_name,
+        email,
+        is_active,
+        avatar_url,
+        must_change_password,
+        password_changed_at,
+        created_at,
+        updated_at
+      `,
+      [
+        id,
+        cleanFirstName,
+        cleanLastName,
+        fullName,
+        email,
+        passwordHash,
+        role.id,
+        mustChangePassword,
+      ],
+    );
+
+    const row = result.rows[0];
+
+    return res.status(201).json({
+      id: row.id,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      fullName: row.full_name,
+      email: row.email,
+      isActive: row.is_active,
+      avatarUrl: row.avatar_url,
+      mustChangePassword: row.must_change_password,
+      passwordChangedAt: row.password_changed_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      roleKey: role.role_key,
+      roleName: role.role_name,
+    });
+  } catch (e) {
+    console.error("DB error in POST /admin/auth/register:", e);
+    return res.status(503).json({
+      message: "Failed to register admin user",
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.post("/admin/auth/login", async (req: Request, res: Response) => {
+  const parsed = AdminLoginSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Invalid login data",
+      error: parsed.error.flatten(),
+    });
+  }
+
+  const { email, password } = parsed.data;
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        u.id,
+        u.first_name,
+        u.last_name,
+        u.full_name,
+        u.email,
+        u.password_hash,
+        u.is_active,
+        u.avatar_url,
+        u.must_change_password,
+        u.password_changed_at,
+        r.role_key,
+        r.role_name
+      FROM admin_users u
+      INNER JOIN admin_roles r
+        ON r.id = u.role_id
+      WHERE LOWER(u.email) = LOWER($1)
+      LIMIT 1
+      `,
+      [email.trim()],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(401).json({
+        message: "Invalid email or password",
+      });
+    }
+
+    const user = result.rows[0];
+
+    if (!user.is_active) {
+      return res.status(403).json({
+        message: "This admin account is inactive",
+      });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password_hash);
+
+    if (!isMatch) {
+      return res.status(401).json({
+        message: "Invalid email or password",
+      });
+    }
+
+    return res.json({
+      id: user.id,
+      firstName: user.first_name,
+      lastName: user.last_name,
+      fullName: user.full_name,
+      email: user.email,
+      roleKey: user.role_key,
+      roleName: user.role_name,
+      isActive: user.is_active,
+      avatarUrl: user.avatar_url,
+      mustChangePassword:
+        user.role_key !== "SUPER_ADMIN" && !user.password_changed_at,
+      passwordChangedAt: user.password_changed_at,
+    });
+  } catch (e) {
+    console.error("DB error in POST /admin/auth/login:", e);
+    return res.status(503).json({
+      message: "Failed to login admin user",
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.get("/admin/users", async (_req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT
+        u.id,
+        u.first_name,
+        u.last_name,
+        u.full_name,
+        u.email,
+        u.is_active,
+        u.avatar_url,
+        u.must_change_password,
+        u.password_changed_at,
+        u.created_at,
+        u.updated_at,
+        r.role_key,
+        r.role_name
+      FROM admin_users u
+      INNER JOIN admin_roles r
+        ON r.id = u.role_id
+      ORDER BY u.created_at DESC
+      `,
+    );
+
+    return res.json(
+      rows.map((row) => ({
+        id: row.id,
+        firstName: row.first_name,
+        lastName: row.last_name,
+        fullName: row.full_name,
+        email: row.email,
+        isActive: row.is_active,
+        avatarUrl: row.avatar_url,
+        mustChangePassword: row.must_change_password,
+        passwordChangedAt: row.password_changed_at,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        roleKey: row.role_key,
+        roleName: row.role_name,
+      })),
+    );
+  } catch (e) {
+    console.error("DB error in GET /admin/users:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.patch("/admin/users/:id", async (req: Request, res: Response) => {
+  const parsed = UpdateAdminUserSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Invalid update data",
+      error: parsed.error.flatten(),
+    });
+  }
+
+  const { firstName, lastName, roleKey, isActive } = parsed.data;
+  const cleanFirstName = firstName.trim();
+  const cleanLastName = lastName.trim();
+  const fullName = `${cleanFirstName} ${cleanLastName}`;
+
+  try {
+    const roleResult = await pool.query(
+      `
+      SELECT id, role_key, role_name
+      FROM admin_roles
+      WHERE role_key = $1
+      LIMIT 1
+      `,
+      [roleKey],
+    );
+
+    if (roleResult.rows.length === 0) {
+      return res.status(400).json({
+        message: "Invalid role",
+      });
+    }
+
+    const role = roleResult.rows[0];
+
+    const result = await pool.query(
+      `
+      UPDATE admin_users
+      SET
+        first_name = $2,
+        last_name = $3,
+        full_name = $4,
+        role_id = $5,
+        is_active = $6,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING
+        id,
+        first_name,
+        last_name,
+        full_name,
+        email,
+        is_active,
+        avatar_url,
+        must_change_password,
+        password_changed_at,
+        created_at,
+        updated_at
+      `,
+      [
+        req.params.id,
+        cleanFirstName,
+        cleanLastName,
+        fullName,
+        role.id,
+        isActive,
+      ],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        message: "Admin user not found",
+      });
+    }
+
+    const row = result.rows[0];
+
+    return res.json({
+      id: row.id,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      fullName: row.full_name,
+      email: row.email,
+      isActive: row.is_active,
+      avatarUrl: row.avatar_url,
+      mustChangePassword: row.must_change_password,
+      passwordChangedAt: row.password_changed_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      roleKey: role.role_key,
+      roleName: role.role_name,
+    });
+  } catch (e) {
+    console.error("DB error in PATCH /admin/users/:id:", e);
+    return res.status(503).json({
+      message: "Failed to update admin user",
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.delete("/admin/users/:id", async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query(
+      `
+      DELETE FROM admin_users
+      WHERE id = $1
+      RETURNING id
+      `,
+      [req.params.id],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        message: "Admin user not found",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      deletedId: result.rows[0].id,
+    });
+  } catch (e) {
+    console.error("DB error in DELETE /admin/users/:id:", e);
+    return res.status(503).json({
+      message: "Failed to delete admin user",
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.patch(
+  "/admin/users/:id/reset-password",
+  async (req: Request, res: Response) => {
+    const parsed = ResetAdminUserPasswordSchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Invalid password reset data",
+        error: parsed.error.flatten(),
+      });
+    }
+
+    try {
+      const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
+
+      const result = await pool.query(
+        `
+  UPDATE admin_users
+  SET
+    password_hash = $2,
+    password_changed_at = NOW(),
+    updated_at = NOW()
+  WHERE id = $1
+  RETURNING id, password_changed_at
+  `,
+        [req.params.id, passwordHash],
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({
+          message: "Admin user not found",
+        });
+      }
+
+      return res.json({
+        ok: true,
+        message: "Password reset successfully",
+      });
+    } catch (e) {
+      console.error("DB error in PATCH /admin/users/:id/reset-password:", e);
+      return res.status(503).json({
+        message: "Failed to reset password",
+        error: "Database unavailable.",
+      });
+    }
+  },
+);
+
+app.patch("/admin/account/profile", async (req: Request, res: Response) => {
+  const parsed = UpdateMyProfileSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Invalid profile data",
+      error: parsed.error.flatten(),
+    });
+  }
+
+  const adminUserId = String(req.headers["x-admin-user-id"] ?? "").trim();
+
+  if (!adminUserId) {
+    return res.status(400).json({
+      message: "Missing admin user id",
+    });
+  }
+
+  const cleanFirstName = parsed.data.firstName.trim();
+  const cleanLastName = parsed.data.lastName.trim();
+  const fullName = `${cleanFirstName} ${cleanLastName}`;
+
+  try {
+    await pool.query(
+      `
+      UPDATE admin_users
+      SET
+        first_name = $2,
+        last_name = $3,
+        full_name = $4,
+        updated_at = NOW()
+      WHERE id = $1
+      `,
+      [adminUserId, cleanFirstName, cleanLastName, fullName],
+    );
+
+    const refreshed = await pool.query(
+      `
+      SELECT
+        u.id,
+        u.first_name,
+        u.last_name,
+        u.full_name,
+        u.email,
+        u.is_active,
+        u.avatar_url,
+        u.must_change_password,
+        u.password_changed_at,
+        r.role_key,
+        r.role_name
+      FROM admin_users u
+      INNER JOIN admin_roles r
+        ON r.id = u.role_id
+      WHERE u.id = $1
+      LIMIT 1
+      `,
+      [adminUserId],
+    );
+
+    if (refreshed.rows.length === 0) {
+      return res.status(404).json({
+        message: "Admin user not found",
+      });
+    }
+
+    const row = refreshed.rows[0];
+
+    return res.json({
+      id: row.id,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      fullName: row.full_name,
+      email: row.email,
+      isActive: row.is_active,
+      avatarUrl: row.avatar_url,
+      mustChangePassword: row.must_change_password,
+      passwordChangedAt: row.password_changed_at,
+      roleKey: row.role_key,
+      roleName: row.role_name,
+    });
+  } catch (e) {
+    console.error("DB error in PATCH /admin/account/profile:", e);
+    return res.status(503).json({
+      message: "Failed to update profile",
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.patch("/admin/account/password", async (req: Request, res: Response) => {
+  const parsed = ChangeMyPasswordSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Invalid password data",
+      error: parsed.error.flatten(),
+    });
+  }
+
+  const adminUserId = String(req.headers["x-admin-user-id"] ?? "").trim();
+
+  if (!adminUserId) {
+    return res.status(400).json({
+      message: "Missing admin user id",
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT id, password_hash
+      FROM admin_users
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [adminUserId],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        message: "Admin user not found",
+      });
+    }
+
+    const user = result.rows[0];
+    const isMatch = await bcrypt.compare(
+      parsed.data.currentPassword,
+      user.password_hash,
+    );
+
+    if (!isMatch) {
+      return res.status(401).json({
+        message: "Current password is incorrect",
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
+
+    await pool.query(
+      `
+  UPDATE admin_users
+  SET
+    password_hash = $2,
+    password_changed_at = NOW(),
+    updated_at = NOW()
+  WHERE id = $1
+  `,
+      [adminUserId, passwordHash],
+    );
+
+    return res.json({
+      ok: true,
+      message: "Password updated successfully",
+      mustChangePassword: false,
+    });
+  } catch (e) {
+    console.error("DB error in PATCH /admin/account/password:", e);
+    return res.status(503).json({
+      message: "Failed to update password",
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.post(
+  "/admin/account/avatar",
+  adminAvatarUpload.single("file") as unknown as RequestHandler,
+  async (req: Request, res: Response) => {
+    try {
+      const adminUserId = String(req.headers["x-admin-user-id"] ?? "").trim();
+
+      if (!adminUserId) {
+        return res.status(400).json({
+          message: "Missing admin user id",
+        });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({
+          message: "No avatar file uploaded",
+        });
+      }
+
+      const avatarUrl = `/uploads/admin-avatars/${req.file.filename}`;
+
+      const result = await pool.query(
+        `
+        UPDATE admin_users
+        SET avatar_url = $2, updated_at = NOW()
+        WHERE id = $1
+        RETURNING
+          id,
+          first_name,
+          last_name,
+          full_name,
+          email,
+          is_active,
+          avatar_url,
+          must_change_password,
+          password_changed_at
+        `,
+        [adminUserId, avatarUrl],
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({
+          message: "Admin user not found",
+        });
+      }
+
+      return res.json({
+        ok: true,
+        avatarUrl,
+        mustChangePassword: result.rows[0].must_change_password,
+        passwordChangedAt: result.rows[0].password_changed_at,
+      });
+    } catch (e) {
+      console.error("DB error in POST /admin/account/avatar:", e);
+      return res.status(503).json({
+        message: "Failed to upload avatar",
+        error: "Database unavailable.",
+      });
+    }
+  },
+);
 //
-// 🔹 LOST & FOUND + CHAT (database-backed)
+// 🔹 LOST & FOUND (database-backed)
 //
 
 type LostFoundType = "lost" | "found";
 type ItemCategory = "ID Card" | "Wallet" | "Book" | "Device" | "Other";
-type ChatRole = "owner" | "finder";
 
 const LostFoundInputSchema = z.object({
   type: z.union([z.literal("lost"), z.literal("found")]),
@@ -44,166 +1302,185 @@ const LostFoundInputSchema = z.object({
   description: z.string().optional(),
   timeHint: z.string().optional(),
   images: z.array(z.string()).optional().default([]),
+  ownerUserId: z.string().optional(),
+  ownerUsername: z.string().optional(),
 });
 
-const FounderReportSchema = z.object({
-  placeFound: z.string().optional(),
-  whenFound: z.string().optional(),
-  description: z.string().optional(),
-  imageUrls: z.array(z.string()).optional().default([]),
-});
-
-const SendLostFoundMessageSchema = z.object({
-  senderRole: z.union([z.literal("owner"), z.literal("finder")]),
-  body: z.string().min(1),
-});
-
-const ReadNotificationsSchema = z.object({
-  chatId: z.string().uuid(),
-  recipientRole: z.union([z.literal("owner"), z.literal("finder")]),
-});
-
-const uploadsRoot = path.resolve(process.cwd(), "uploads");
-const lostFoundUploadDir = path.join(uploadsRoot, "lost-found");
-fs.mkdirSync(lostFoundUploadDir, { recursive: true });
-app.use("/uploads", express.static(uploadsRoot));
-
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req: any, _file: any, cb: any) => cb(null, lostFoundUploadDir),
-    filename: (_req: any, file: any, cb: any) => {
-      const ext = path.extname(file.originalname || ".jpg");
-      cb(null, `${crypto.randomUUID()}${ext}`);
-    },
-  }),
-});
-
-async function ensureLostFoundTables() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS lost_found_posts (
-      id UUID PRIMARY KEY,
-      type TEXT NOT NULL CHECK (type IN ('lost','found')),
-      category TEXT NOT NULL CHECK (category IN ('ID Card','Wallet','Book','Device','Other')),
-      title TEXT NOT NULL,
-      description TEXT,
-      time_hint TEXT,
-      status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved')),
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS lost_found_images (
-      id UUID PRIMARY KEY,
-      post_id UUID NOT NULL REFERENCES lost_found_posts(id) ON DELETE CASCADE,
-      image_url TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS lost_found_chats (
-      id UUID PRIMARY KEY,
-      post_id UUID NOT NULL UNIQUE REFERENCES lost_found_posts(id) ON DELETE CASCADE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      last_message_at TIMESTAMPTZ
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS lost_found_messages (
-      id UUID PRIMARY KEY,
-      chat_id UUID NOT NULL REFERENCES lost_found_chats(id) ON DELETE CASCADE,
-      sender_role TEXT NOT NULL CHECK (sender_role IN ('owner','finder','system')),
-      body TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS lost_found_founder_reports (
-      id UUID PRIMARY KEY,
-      post_id UUID NOT NULL REFERENCES lost_found_posts(id) ON DELETE CASCADE,
-      place_found TEXT,
-      when_found TIMESTAMPTZ,
-      description TEXT,
-      image_urls TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS lost_found_notifications (
-      id UUID PRIMARY KEY,
-      post_id UUID NOT NULL REFERENCES lost_found_posts(id) ON DELETE CASCADE,
-      chat_id UUID NOT NULL REFERENCES lost_found_chats(id) ON DELETE CASCADE,
-      message_id UUID NOT NULL REFERENCES lost_found_messages(id) ON DELETE CASCADE,
-      recipient_role TEXT NOT NULL CHECK (recipient_role IN ('owner','finder')),
-      title TEXT NOT NULL,
-      body TEXT NOT NULL,
-      is_read BOOLEAN NOT NULL DEFAULT FALSE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-  `);
-}
-
-async function getOrCreateChatId(postId: string) {
-  const existing = await pool.query(
-    `SELECT id FROM lost_found_chats WHERE post_id = $1 LIMIT 1`,
-    [postId]
-  );
-  if (existing.rows.length > 0) return existing.rows[0].id as string;
-
-  const chatId = crypto.randomUUID();
-  await pool.query(
-    `INSERT INTO lost_found_chats (id, post_id, created_at, updated_at, last_message_at)
-     VALUES ($1, $2, NOW(), NOW(), NOW())`,
-    [chatId, postId]
-  );
-  return chatId;
-}
-
-async function getPostWithImages(postId: string) {
-  const result = await pool.query(
-    `
-    SELECT
-      p.id,
-      p.type,
-      p.category,
-      p.title,
-      p.description,
-      p.time_hint as "timeHint",
-      p.status,
-      p.created_at as "createdAt",
-      COALESCE(
-        ARRAY_AGG(i.image_url ORDER BY i.created_at) FILTER (WHERE i.id IS NOT NULL),
-        ARRAY[]::TEXT[]
-      ) as images
-    FROM lost_found_posts p
-    LEFT JOIN lost_found_images i ON i.post_id = p.id
-    WHERE p.id = $1
-    GROUP BY p.id
-    `,
-    [postId]
-  );
-  return result.rows[0] ?? null;
-}
-
-app.post("/lost-found/uploads/image", upload.single("image"), (req: Request, res: Response) => {
-  const uploaded = req as Request & { file?: { filename: string } };
-  if (!uploaded.file) {
-    return res.status(400).json({ message: "Image file is required" });
-  }
-
-  const host = req.get("host");
-  const protocol = req.protocol;
-  const url = `${protocol}://${host}/uploads/lost-found/${uploaded.file.filename}`;
-  return res.status(201).json({ url });
+const LostFoundChatInputSchema = z.object({
+  senderType: z.union([
+    z.literal("owner"),
+    z.literal("finder"),
+    z.literal("claimant"),
+    z.literal("system"),
+  ]),
+  senderLabel: z.string().optional(),
+  message: z.string().min(1),
 });
 
 app.get("/lost-found/posts", async (_req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        p.id,
+        p.type,
+        p.category,
+        p.title,
+        p.description,
+        p.time_hint,
+        p.status,
+        p.created_by_user_id,
+        p.owner_user_id,
+        p.owner_username,
+        p.is_found,
+        p.created_at,
+        p.updated_at,
+        COALESCE(
+          json_agg(i.image_url ORDER BY i.created_at) FILTER (WHERE i.id IS NOT NULL),
+          '[]'::json
+        ) AS images
+      FROM lost_found_posts p
+      LEFT JOIN lost_found_images i
+        ON i.post_id = p.id
+      GROUP BY p.id
+      ORDER BY p.created_at DESC
+    `);
+
+    res.json(
+      rows.map((row) => ({
+        id: row.id,
+        type: row.type,
+        category: row.category,
+        title: row.title,
+        description: row.description,
+        timeHint: row.time_hint,
+        status: row.status,
+        createdByUserId: row.created_by_user_id,
+        ownerUserId: row.owner_user_id,
+        ownerUsername: row.owner_username,
+        isFound: row.is_found,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        images: row.images ?? [],
+      })),
+    );
+  } catch (e) {
+    console.error("DB error in GET /lost-found/posts:", e);
+    res.status(503).json({ error: "Database unavailable." });
+  }
+});
+
+app.post("/lost-found/posts", async (req: Request, res: Response) => {
+  const parsed = LostFoundInputSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ ok: false, error: parsed.error.flatten() });
+  }
+
+  const data = parsed.data;
+  const postId = crypto.randomUUID();
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    await client.query(
+      `
+  INSERT INTO lost_found_posts (
+    id,
+    type,
+    category,
+    title,
+    description,
+    time_hint,
+    status,
+    created_by_user_id,
+    owner_user_id,
+    owner_username,
+    is_found,
+    created_at,
+    updated_at
+  )
+  VALUES ($1,$2,$3,$4,$5,$6,'open',$7,$8,$9,false,NOW(),NOW())
+  `,
+      [
+        postId,
+        data.type,
+        data.category,
+        data.title,
+        data.description ?? null,
+        data.timeHint ?? null,
+        data.ownerUserId ?? null,
+        data.ownerUserId ?? null,
+        data.ownerUsername ?? null,
+      ],
+    );
+
+    for (const imageUrl of data.images ?? []) {
+      await client.query(
+        `
+        INSERT INTO lost_found_images (id, post_id, image_url, created_at)
+        VALUES ($1,$2,$3,NOW())
+        `,
+        [crypto.randomUUID(), postId, imageUrl],
+      );
+    }
+
+    await client.query("COMMIT");
+
+    const result = await client.query(
+      `
+      SELECT
+        p.id,
+        p.type,
+        p.category,
+        p.title,
+        p.description,
+        p.time_hint,
+        p.status,
+        p.created_by_user_id,
+        p.owner_username,
+        p.is_found,
+        p.created_at,
+        p.updated_at,
+        COALESCE(
+          json_agg(i.image_url ORDER BY i.created_at) FILTER (WHERE i.id IS NOT NULL),
+          '[]'::json
+        ) AS images
+      FROM lost_found_posts p
+      LEFT JOIN lost_found_images i
+        ON i.post_id = p.id
+      WHERE p.id = $1
+      GROUP BY p.id
+      `,
+      [postId],
+    );
+
+    const row = result.rows[0];
+
+    return res.status(201).json({
+      id: row.id,
+      type: row.type,
+      category: row.category,
+      title: row.title,
+      description: row.description,
+      timeHint: row.time_hint,
+      status: row.status,
+      ownerUserId: row.owner_user_id,
+      ownerUsername: row.owner_username,
+      isFound: row.is_found ?? false,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      images: row.images ?? [],
+    });
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("DB error in POST /lost-found/posts:", e);
+    return res.status(503).json({ error: "Database unavailable." });
+  } finally {
+    client.release();
+  }
+});
+
+app.get("/lost-found/posts/:id", async (req: Request, res: Response) => {
   try {
     const { rows } = await pool.query(
       `
@@ -213,275 +1490,305 @@ app.get("/lost-found/posts", async (_req: Request, res: Response) => {
         p.category,
         p.title,
         p.description,
-        p.time_hint as "timeHint",
+        p.time_hint,
         p.status,
-        p.created_at as "createdAt",
+        p.created_by_user_id,
+        p.owner_user_id,
+        p.owner_username,
+        p.is_found,
+        p.created_at,
+        p.updated_at,
         COALESCE(
-          ARRAY_AGG(i.image_url ORDER BY i.created_at) FILTER (WHERE i.id IS NOT NULL),
-          ARRAY[]::TEXT[]
-        ) as images
+          json_agg(DISTINCT i.image_url) FILTER (WHERE i.id IS NOT NULL),
+          '[]'::json
+        ) AS images
       FROM lost_found_posts p
-      LEFT JOIN lost_found_images i ON i.post_id = p.id
+      LEFT JOIN lost_found_images i
+        ON i.post_id = p.id
+      WHERE p.id = $1
       GROUP BY p.id
-      ORDER BY p.created_at DESC
-      `
-    );
-    return res.json(rows);
-  } catch (e) {
-    console.error("DB error in GET /lost-found/posts:", e);
-    return res.status(503).json({ message: "Database unavailable" });
-  }
-});
-
-app.post("/lost-found/posts", async (req: Request, res: Response) => {
-  try {
-    const parsed = LostFoundInputSchema.parse(req.body);
-    const id = crypto.randomUUID();
-    await pool.query(
-      `
-      INSERT INTO lost_found_posts (id, type, category, title, description, time_hint, status, created_at, updated_at)
-      VALUES ($1,$2,$3,$4,$5,$6,'open',NOW(),NOW())
       `,
-      [id, parsed.type, parsed.category, parsed.title, parsed.description ?? null, parsed.timeHint ?? null]
+      [req.params.id],
     );
 
-    for (const imageUrl of parsed.images) {
-      await pool.query(
-        `INSERT INTO lost_found_images (id, post_id, image_url, created_at) VALUES ($1,$2,$3,NOW())`,
-        [crypto.randomUUID(), id, imageUrl]
-      );
+    if (rows.length === 0) {
+      return res.status(404).json({ ok: false, message: "Not found" });
     }
 
-    const post = await getPostWithImages(id);
-    return res.status(201).json(post);
-  } catch (e) {
-    console.error("DB error in POST /lost-found/posts:", e);
-    return res.status(400).json({ message: e instanceof Error ? e.message : "Could not create post" });
-  }
-});
-
-app.get("/lost-found/posts/:id", async (req: Request, res: Response) => {
-  try {
-    const post = await getPostWithImages(req.params.id);
-    if (!post) return res.status(404).json({ message: "Not found" });
-    return res.json(post);
-  } catch (e) {
-    console.error("DB error in GET /lost-found/posts/:id:", e);
-    return res.status(503).json({ message: "Database unavailable" });
-  }
-});
-
-app.post("/lost-found/posts/:id/resolve", async (req: Request, res: Response) => {
-  try {
-    const { rowCount } = await pool.query(
-      `UPDATE lost_found_posts SET status = 'resolved', updated_at = NOW() WHERE id = $1`,
-      [req.params.id]
-    );
-    if (!rowCount) return res.status(404).json({ message: "Not found" });
-    const post = await getPostWithImages(req.params.id);
-    return res.json(post);
-  } catch (e) {
-    console.error("DB error in POST /lost-found/posts/:id/resolve:", e);
-    return res.status(503).json({ message: "Database unavailable" });
-  }
-});
-
-app.delete("/lost-found/posts/:id", async (req: Request, res: Response) => {
-  try {
-    const { rowCount } = await pool.query(`DELETE FROM lost_found_posts WHERE id = $1`, [req.params.id]);
-    if (!rowCount) return res.status(404).json({ message: "Not found" });
-    return res.status(204).send();
-  } catch (e) {
-    console.error("DB error in DELETE /lost-found/posts/:id:", e);
-    return res.status(503).json({ message: "Database unavailable" });
-  }
-});
-
-app.post("/lost-found/posts/:id/founder-report", async (req: Request, res: Response) => {
-  try {
-    const postId = req.params.id;
-    const parsed = FounderReportSchema.parse(req.body);
-    const post = await getPostWithImages(postId);
-    if (!post) return res.status(404).json({ message: "Post not found" });
-
-    await pool.query(
+    const chatResult = await pool.query(
       `
-      INSERT INTO lost_found_founder_reports (id, post_id, place_found, when_found, description, image_urls, created_at)
-      VALUES ($1,$2,$3,$4,$5,$6,NOW())
-      `,
-      [
-        crypto.randomUUID(),
-        postId,
-        parsed.placeFound ?? null,
-        parsed.whenFound ? new Date(parsed.whenFound) : null,
-        parsed.description ?? null,
-        parsed.imageUrls,
-      ]
-    );
-
-    const chatId = await getOrCreateChatId(postId);
-    const lines: string[] = [];
-    if (parsed.placeFound?.trim()) lines.push(`Place found: ${parsed.placeFound.trim()}`);
-    if (parsed.whenFound) lines.push(`Time found: ${new Date(parsed.whenFound).toLocaleString()}`);
-    if (parsed.description?.trim()) lines.push(`Finder description: ${parsed.description.trim()}`);
-    if (parsed.imageUrls.length) lines.push(`Photos: ${parsed.imageUrls.join(", ")}`);
-    const initialBody =
-      lines.length > 0
-        ? `Hi, I found an item that may be yours.\n${lines.join("\n")}\nPlease confirm details to verify ownership.`
-        : "Hi, I found an item that may be yours. Please confirm details to verify ownership.";
-
-    const messageId = crypto.randomUUID();
-    await pool.query(
-      `
-      INSERT INTO lost_found_messages (id, chat_id, sender_role, body, created_at)
-      VALUES ($1,$2,'finder',$3,NOW())
-      `,
-      [messageId, chatId, initialBody]
-    );
-    await pool.query(
-      `
-      UPDATE lost_found_chats
-      SET updated_at = NOW(), last_message_at = NOW()
-      WHERE id = $1
-      `,
-      [chatId]
-    );
-    await pool.query(
-      `
-      INSERT INTO lost_found_notifications (id, post_id, chat_id, message_id, recipient_role, title, body, is_read, created_at)
-      VALUES ($1,$2,$3,$4,'owner',$5,$6,FALSE,NOW())
-      `,
-      [crypto.randomUUID(), postId, chatId, messageId, "UniLocate Lost & Found", "A finder sent you a new message."]
-    );
-
-    return res.status(201).json({ chatId, initialMessage: initialBody });
-  } catch (e) {
-    console.error("DB error in POST /lost-found/posts/:id/founder-report:", e);
-    return res.status(400).json({ message: e instanceof Error ? e.message : "Could not submit founder report" });
-  }
-});
-
-app.get("/lost-found/posts/:id/chat", async (req: Request, res: Response) => {
-  try {
-    const postId = req.params.id;
-    const viewerRoleRaw = String(req.query.viewerRole ?? "owner");
-    const viewerRole: ChatRole = viewerRoleRaw === "finder" ? "finder" : "owner";
-    const chatId = await getOrCreateChatId(postId);
-
-    const messagesResult = await pool.query(
-      `
-      SELECT id, sender_role, body, created_at
-      FROM lost_found_messages
-      WHERE chat_id = $1
+      SELECT id, sender_type, sender_label, message, created_at
+      FROM lost_found_chats
+      WHERE post_id = $1
       ORDER BY created_at ASC
       `,
-      [chatId]
+      [req.params.id],
     );
 
-    const notificationsResult = await pool.query(
-      `
-      SELECT COUNT(*)::int as unread
-      FROM lost_found_notifications
-      WHERE chat_id = $1 AND recipient_role = $2 AND is_read = FALSE
-      `,
-      [chatId, viewerRole]
-    );
+    const row = rows[0];
 
-    return res.json({
-      chatId,
-      unreadCount: notificationsResult.rows[0]?.unread ?? 0,
-      messages: messagesResult.rows.map((row) => ({
-        id: row.id,
-        senderRole: row.sender_role,
-        body: row.body,
-        createdAt: row.created_at,
+    res.json({
+      id: row.id,
+      type: row.type,
+      category: row.category,
+      title: row.title,
+      description: row.description,
+      timeHint: row.time_hint,
+      status: row.status,
+      createdByUserId: row.created_by_user_id,
+      ownerUserId: row.owner_user_id,
+      ownerUsername: row.owner_username,
+      isFound: row.is_found,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      images: row.images ?? [],
+      chats: chatResult.rows.map((chat) => ({
+        id: chat.id,
+        senderType: chat.sender_type,
+        senderLabel: chat.sender_label,
+        message: chat.message,
+        createdAt: chat.created_at,
       })),
     });
   } catch (e) {
-    console.error("DB error in GET /lost-found/posts/:id/chat:", e);
-    return res.status(400).json({ message: "Could not load chat" });
+    console.error("DB error in GET /lost-found/posts/:id:", e);
+    res.status(503).json({ error: "Database unavailable." });
   }
 });
 
-app.post("/lost-found/chats/:chatId/messages", async (req: Request, res: Response) => {
+app.post(
+  "/lost-found/posts/:id/resolve",
+  async (req: Request, res: Response) => {
+    try {
+      const result = await pool.query(
+        `
+        UPDATE lost_found_posts
+        SET status = 'resolved',
+            is_found = true,
+            updated_at = NOW()
+        WHERE id = $1
+        RETURNING *
+        `,
+        [req.params.id],
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ ok: false, message: "Not found" });
+      }
+
+      const row = result.rows[0];
+
+      res.json({
+        id: row.id,
+        type: row.type,
+        category: row.category,
+        title: row.title,
+        description: row.description,
+        timeHint: row.time_hint,
+        status: row.status,
+        createdByUserId: row.created_by_user_id,
+        ownerUserId: row.owner_user_id,
+        ownerUsername: row.owner_username,
+        isFound: row.is_found,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      });
+    } catch (e) {
+      console.error("DB error in POST /lost-found/posts/:id/resolve:", e);
+      res.status(503).json({ error: "Database unavailable." });
+    }
+  },
+);
+
+app.delete("/lost-found/posts/:id", async (req: Request, res: Response) => {
   try {
-    const parsed = SendLostFoundMessageSchema.parse(req.body);
-    const chatId = req.params.chatId;
-    const messageId = crypto.randomUUID();
-    const recipientRole: ChatRole = parsed.senderRole === "finder" ? "owner" : "finder";
-
-    const chatResult = await pool.query(
-      `SELECT id, post_id FROM lost_found_chats WHERE id = $1 LIMIT 1`,
-      [chatId]
+    const result = await pool.query(
+      `DELETE FROM lost_found_posts WHERE id = $1 RETURNING id`,
+      [req.params.id],
     );
-    if (chatResult.rows.length === 0) return res.status(404).json({ message: "Chat not found" });
 
-    await pool.query(
+    if (result.rows.length === 0) {
+      return res.status(404).json({ ok: false, message: "Not found" });
+    }
+
+    res.status(204).send();
+  } catch (e) {
+    console.error("DB error in DELETE /lost-found/posts/:id", e);
+    res.status(503).json({ error: "Database unavailable." });
+  }
+});
+
+app.get("/lost-found/posts/:id/chats", async (req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(
       `
-      INSERT INTO lost_found_messages (id, chat_id, sender_role, body, created_at)
-      VALUES ($1,$2,$3,$4,NOW())
+      SELECT id, sender_type, sender_label, message, created_at
+      FROM lost_found_chats
+      WHERE post_id = $1
+      ORDER BY created_at ASC
       `,
-      [messageId, chatId, parsed.senderRole, parsed.body]
+      [req.params.id],
     );
-    await pool.query(
-      `UPDATE lost_found_chats SET updated_at = NOW(), last_message_at = NOW() WHERE id = $1`,
-      [chatId]
+
+    res.json(
+      rows.map((chat) => ({
+        id: chat.id,
+        senderType: chat.sender_type,
+        senderLabel: chat.sender_label,
+        message: chat.message,
+        createdAt: chat.created_at,
+      })),
     );
-    await pool.query(
+  } catch (e) {
+    console.error("DB error in GET /lost-found/posts/:id/chats:", e);
+    res.status(503).json({ error: "Database unavailable." });
+  }
+});
+
+app.post("/lost-found/posts/:id/chats", async (req: Request, res: Response) => {
+  const parsed = LostFoundChatInputSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ ok: false, error: parsed.error.flatten() });
+  }
+
+  try {
+    const postCheck = await pool.query(
+      `SELECT id FROM lost_found_posts WHERE id = $1`,
+      [req.params.id],
+    );
+
+    if (postCheck.rows.length === 0) {
+      return res.status(404).json({ ok: false, message: "Post not found" });
+    }
+
+    const result = await pool.query(
       `
-      INSERT INTO lost_found_notifications (id, post_id, chat_id, message_id, recipient_role, title, body, is_read, created_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE,NOW())
+      INSERT INTO lost_found_chats (id, post_id, sender_type, sender_label, message, created_at)
+      VALUES ($1,$2,$3,$4,$5,NOW())
+      RETURNING id, sender_type, sender_label, message, created_at
       `,
       [
         crypto.randomUUID(),
-        chatResult.rows[0].post_id,
-        chatId,
-        messageId,
-        recipientRole,
-        "UniLocate Lost & Found",
-        "You have a new secure chat message.",
-      ]
+        req.params.id,
+        parsed.data.senderType,
+        parsed.data.senderLabel ?? null,
+        parsed.data.message,
+      ],
     );
 
-    return res.status(201).json({
-      id: messageId,
-      senderRole: parsed.senderRole,
-      body: parsed.body,
-      createdAt: new Date().toISOString(),
+    res.status(201).json({
+      id: result.rows[0].id,
+      senderType: result.rows[0].sender_type,
+      senderLabel: result.rows[0].sender_label,
+      message: result.rows[0].message,
+      createdAt: result.rows[0].created_at,
     });
   } catch (e) {
-    console.error("DB error in POST /lost-found/chats/:chatId/messages:", e);
-    return res.status(400).json({ message: e instanceof Error ? e.message : "Could not send message" });
+    console.error("DB error in POST /lost-found/posts/:id/chats:", e);
+    res.status(503).json({ error: "Database unavailable." });
   }
 });
 
-app.post("/lost-found/notifications/read", async (req: Request, res: Response) => {
-  try {
-    const parsed = ReadNotificationsSchema.parse(req.body);
-    await pool.query(
-      `
-      UPDATE lost_found_notifications
-      SET is_read = TRUE
-      WHERE chat_id = $1 AND recipient_role = $2 AND is_read = FALSE
-      `,
-      [parsed.chatId, parsed.recipientRole]
-    );
-    return res.json({ ok: true });
-  } catch (e) {
-    return res.status(400).json({ message: e instanceof Error ? e.message : "Could not mark notifications as read" });
-  }
-});
+app.post(
+  "/lost-found/uploads",
+  lostFoundUpload.single("file") as unknown as RequestHandler,
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          message: "No file uploaded",
+        });
+      }
+
+      return res.status(201).json({
+        ok: true,
+        imageUrl: `/uploads/lost-found/${req.file.filename}`,
+      });
+    } catch (e) {
+      console.error("Upload failed in POST /lost-found/uploads:", e);
+      return res.status(503).json({
+        message: "Failed to upload image",
+        error: "Database unavailable.",
+      });
+    }
+  },
+);
+
+app.get(
+  "/lost-found/chat-threads/:userId",
+  async (req: Request, res: Response) => {
+    try {
+      const userId = String(req.params.userId || "").trim();
+      const username = String(req.query.username || "").trim();
+
+      if (!userId && !username) {
+        return res.status(400).json({
+          message: "userId or username is required",
+        });
+      }
+
+      const { rows } = await pool.query(
+        `
+        SELECT
+          p.id AS post_id,
+          p.title,
+          p.owner_user_id,
+          p.owner_username,
+          MAX(c.created_at) AS last_message_at,
+          (
+            SELECT c2.message
+            FROM lost_found_chats c2
+            WHERE c2.post_id = p.id
+            ORDER BY c2.created_at DESC
+            LIMIT 1
+          ) AS last_message
+        FROM lost_found_posts p
+        INNER JOIN lost_found_chats c
+          ON c.post_id = p.id
+        WHERE p.owner_user_id = $1
+           OR LOWER(COALESCE(p.owner_username, '')) = LOWER($2)
+           OR EXISTS (
+             SELECT 1
+             FROM lost_found_chats c3
+             WHERE c3.post_id = p.id
+               AND LOWER(COALESCE(c3.sender_label, '')) = LOWER($2)
+           )
+        GROUP BY p.id, p.title, p.owner_user_id, p.owner_username
+        ORDER BY MAX(c.created_at) DESC
+        `,
+        [userId, username],
+      );
+
+      return res.json(
+        rows.map((row) => ({
+          id: row.post_id,
+          postId: row.post_id,
+          title: row.title,
+          preview: row.last_message ?? "No messages yet",
+          lastMessageAt: row.last_message_at,
+          ownerUserId: row.owner_user_id,
+          ownerUsername: row.owner_username,
+        })),
+      );
+    } catch (e) {
+      console.error("DB error in GET /lost-found/chat-threads/:userId:", e);
+      return res.status(503).json({ error: "Database unavailable." });
+    }
+  },
+);
 
 // 1) Download zones
 app.get("/zones", async (_req: Request, res: Response) => {
   try {
     const { rows } = await pool.query(
-      "SELECT id, name, type, polygon_geojson FROM zones ORDER BY name ASC"
+      "SELECT id, name, type, polygon_geojson FROM zones ORDER BY name ASC",
     );
     res.json(rows);
   } catch (e) {
     console.error("DB error in GET /zones:", e);
-    res.status(503).json({ error: "Database unavailable. Check DATABASE_URL in apps/api/.env" });
+    res.status(503).json({
+      error: "Database unavailable. Check DATABASE_URL in apps/api/.env",
+    });
   }
 });
 
@@ -493,7 +1800,7 @@ app.get("/boundary", async (_req: Request, res: Response) => {
       FROM boundaries
       ORDER BY id ASC
       LIMIT 1
-      `
+      `,
     );
 
     if (rows.length === 0) {
@@ -503,18 +1810,25 @@ app.get("/boundary", async (_req: Request, res: Response) => {
     res.json(rows[0]);
   } catch (e) {
     console.error("DB error in GET /boundary:", e);
-    res.status(503).json({ error: "Database unavailable. Check DATABASE_URL in apps/api/.env" });
+    res.status(503).json({
+      error: "Database unavailable. Check DATABASE_URL in apps/api/.env",
+    });
   }
 });
 
 // 2) Send a location event
 const LocationEventSchema = z.object({
   userId: z.string().min(1),
+  deviceId: z.string().min(1),
   lat: z.number(),
   lng: z.number(),
   accuracyM: z.number().optional(),
   matchedZoneId: z.string().optional().nullable(),
   eventType: z.enum(["PING", "ENTER", "EXIT"]),
+  appState: z
+    .enum(["foreground", "background"])
+    .optional()
+    .default("foreground"),
 });
 
 app.post("/events/location", async (req: Request, res: Response) => {
@@ -525,14 +1839,82 @@ app.post("/events/location", async (req: Request, res: Response) => {
 
   try {
     await pool.query(
-      `INSERT INTO location_events (user_id, lat, lng, accuracy_m, matched_zone_id, event_type)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
-      [e.userId, e.lat, e.lng, e.accuracyM ?? null, e.matchedZoneId ?? null, e.eventType]
+      `INSERT INTO location_events (
+        user_id,
+        lat,
+        lng,
+        accuracy_m,
+        matched_zone_id,
+        event_type
+      )
+      VALUES ($1,$2,$3,$4,$5,$6)`,
+      [
+        e.userId,
+        e.lat,
+        e.lng,
+        e.accuracyM ?? null,
+        e.matchedZoneId ?? null,
+        e.eventType,
+      ],
     );
+
+    await pool.query(
+      `
+      INSERT INTO active_presence (
+        user_id,
+        device_id,
+        zone_id,
+        lat,
+        lng,
+        accuracy_m,
+        app_state,
+        last_seen_at,
+        created_at,
+        updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW(),NOW())
+      ON CONFLICT (user_id, device_id)
+      DO UPDATE SET
+        zone_id = EXCLUDED.zone_id,
+        lat = EXCLUDED.lat,
+        lng = EXCLUDED.lng,
+        accuracy_m = EXCLUDED.accuracy_m,
+        app_state = EXCLUDED.app_state,
+        last_seen_at = NOW(),
+        updated_at = NOW()
+      `,
+      [
+        e.userId,
+        e.deviceId,
+        e.matchedZoneId ?? null,
+        e.lat,
+        e.lng,
+        e.accuracyM ?? null,
+        e.appState ?? "foreground",
+      ],
+    );
+
+    if (e.eventType === "EXIT") {
+      await pool.query(
+        `
+        UPDATE active_presence
+        SET
+          zone_id = NULL,
+          last_seen_at = NOW(),
+          updated_at = NOW()
+        WHERE user_id = $1
+          AND device_id = $2
+        `,
+        [e.userId, e.deviceId],
+      );
+    }
+
     res.json({ ok: true });
   } catch (err) {
     console.error("DB error in POST /events/location:", err);
-    res.status(503).json({ error: "Database unavailable. Check DATABASE_URL in apps/api/.env" });
+    res.status(503).json({
+      error: "Database unavailable. Check DATABASE_URL in apps/api/.env",
+    });
   }
 });
 
@@ -541,29 +1923,93 @@ app.get("/zones/live", async (_req: Request, res: Response) => {
   try {
     const { rows } = await pool.query(
       `
-      SELECT matched_zone_id as "zoneId", COUNT(*)::int as "pingsLast60s"
-      FROM location_events
-      WHERE matched_zone_id IS NOT NULL
-        AND event_type = 'PING'
-        AND created_at > NOW() - INTERVAL '60 seconds'
-      GROUP BY matched_zone_id
-      `
+  SELECT
+    zone_id AS "zoneId",
+    COUNT(DISTINCT user_id)::int AS "pingsLast60s"
+  FROM active_presence
+  WHERE zone_id IS NOT NULL
+    AND last_seen_at > NOW() - INTERVAL '90 seconds'
+  GROUP BY zone_id
+  `,
     );
     res.json(rows);
   } catch (e) {
     console.error("DB error in GET /zones/live:", e);
-    res.status(503).json({ error: "Database unavailable. Check DATABASE_URL in apps/api/.env" });
+    res.status(503).json({
+      error: "Database unavailable. Check DATABASE_URL in apps/api/.env",
+    });
+  }
+});
+
+app.get("/zones/occupancy", async (_req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT
+        z.id,
+        z.name,
+        z.type,
+        z.polygon_geojson,
+        COALESCE(d.display_name, z.name) AS display_name,
+        COALESCE(d.capacity, 0) AS capacity,
+        COALESCE(d.description, '') AS description,
+        COALESCE(d.area_group, 'common_space') AS area_group,
+        COALESCE(d.capacity_mode, 'open') AS capacity_mode,
+        COALESCE(l.active_count, 0) AS current_count
+      FROM zones z
+      LEFT JOIN zone_details d
+        ON d.zone_id = z.id
+      LEFT JOIN (
+  SELECT
+    zone_id,
+    COUNT(DISTINCT user_id)::int AS active_count
+  FROM active_presence
+  WHERE zone_id IS NOT NULL
+    AND last_seen_at > NOW() - INTERVAL '90 seconds'
+  GROUP BY zone_id
+) l
+  ON l.zone_id = z.id
+      ORDER BY z.name ASC
+      `,
+    );
+
+    const result = rows.map((row) => ({
+      ...row,
+      status: getOccupancyStatus(
+        Number(row.current_count ?? 0),
+        Number(row.capacity ?? 0),
+      ),
+    }));
+
+    res.json(result);
+  } catch (e) {
+    console.error("DB error in GET /zones/occupancy:", e);
+    res.status(503).json({
+      error: "Database unavailable. Check DATABASE_URL in apps/api/.env",
+    });
   }
 });
 
 //
-// ✅ ADMIN IMPORT ENDPOINT (Upload calibrator JSON -> upsert zones)
+// ✅ ADMIN IMPORT ENDPOINT (Upload calibrator JSON -> upsert zones + zone_details)
 //
-const ZoneSchema = z.object({
+
+const ZoneImportSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   type: z.string().min(1),
   polygon_geojson: z.any(),
+  details: z
+    .object({
+      display_name: z.string().optional().nullable(),
+      capacity: z.number().int().nonnegative().optional().nullable(),
+      description: z.string().optional().nullable(),
+      status_override: z.string().optional().nullable(),
+      area_group: z.string().optional().nullable(),
+      capacity_mode: z.string().optional().nullable(),
+    })
+    .optional()
+    .nullable(),
 });
 
 function normalizeGeoJson(input: any) {
@@ -578,20 +2024,29 @@ app.post("/admin/zones/import", async (req: Request, res: Response) => {
     const zonesRaw = Array.isArray(body) ? body : body?.zones;
 
     if (!Array.isArray(zonesRaw)) {
-      return res
-        .status(400)
-        .json({ ok: false, message: "Expected JSON array or { zones: [...] }" });
+      return res.status(400).json({
+        ok: false,
+        message: "Expected JSON array or { zones: [...] }",
+      });
     }
 
-    const parsed = zonesRaw.map((z) => ZoneSchema.parse(z));
+    const parsed = zonesRaw.map((z) => ZoneImportSchema.parse(z));
 
-    let client;
-    try {
-      client = await pool.connect();
-    } catch (dbErr) {
-      console.error("DB error in POST /admin/zones/import:", dbErr);
-      return res.status(503).json({ ok: false, message: "Database unavailable. Check DATABASE_URL in apps/api/.env" });
+    const parsedIds = parsed.map((z) => z.id);
+    const duplicateIdsInPayload = parsedIds.filter(
+      (id, index) => parsedIds.indexOf(id) !== index,
+    );
+
+    if (duplicateIdsInPayload.length > 0) {
+      return res.status(400).json({
+        ok: false,
+        message: `Duplicate zone id(s) found in import payload: ${[
+          ...new Set(duplicateIdsInPayload),
+        ].join(", ")}`,
+      });
     }
+
+    const client = await pool.connect();
 
     try {
       await client.query("BEGIN");
@@ -599,8 +2054,14 @@ app.post("/admin/zones/import", async (req: Request, res: Response) => {
       for (const z of parsed) {
         const polygon = normalizeGeoJson(z.polygon_geojson);
 
-        if (!polygon || polygon.type !== "Polygon" || !Array.isArray(polygon.coordinates)) {
-          throw new Error(`Zone ${z.id} invalid polygon_geojson (must be GeoJSON Polygon)`);
+        if (
+          !polygon ||
+          polygon.type !== "Polygon" ||
+          !Array.isArray(polygon.coordinates)
+        ) {
+          throw new Error(
+            `Zone ${z.id} invalid polygon_geojson (must be GeoJSON Polygon)`,
+          );
         }
 
         await client.query(
@@ -613,24 +2074,351 @@ app.post("/admin/zones/import", async (req: Request, res: Response) => {
             type = EXCLUDED.type,
             polygon_geojson = EXCLUDED.polygon_geojson
           `,
-          [z.id, z.name, z.type, JSON.stringify(polygon)]
+          [z.id, z.name, z.type, JSON.stringify(polygon)],
+        );
+
+        const details = z.details ?? {};
+
+        await client.query(
+          `
+          INSERT INTO zone_details (
+            zone_id,
+            display_name,
+            capacity,
+            description,
+            status_override,
+            created_at,
+            updated_at,
+            area_group,
+            capacity_mode
+          )
+          VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            $5,
+            NOW(),
+            NOW(),
+            $6,
+            $7
+          )
+          ON CONFLICT (zone_id)
+          DO UPDATE SET
+            display_name = EXCLUDED.display_name,
+            capacity = EXCLUDED.capacity,
+            description = EXCLUDED.description,
+            status_override = EXCLUDED.status_override,
+            updated_at = NOW(),
+            area_group = EXCLUDED.area_group,
+            capacity_mode = EXCLUDED.capacity_mode
+          `,
+          [
+            z.id,
+            details.display_name ?? z.name,
+            details.capacity ?? 0,
+            details.description ?? null,
+            details.status_override ?? null,
+            details.area_group ?? "common_space",
+            details.capacity_mode ?? "open",
+          ],
         );
       }
 
       await client.query("COMMIT");
+
+      return res.json({
+        ok: true,
+        imported: parsed.length,
+      });
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;
     } finally {
       client.release();
     }
-
-    res.json({ ok: true, imported: parsed.length });
   } catch (e: any) {
-    if (e?.code === "28P01" || e?.message?.includes("password authentication")) {
-      return res.status(503).json({ ok: false, message: "Database unavailable. Check DATABASE_URL in apps/api/.env" });
+    console.error("DB error in POST /admin/zones/import:", e);
+
+    if (
+      e?.code === "28P01" ||
+      e?.message?.includes("password authentication")
+    ) {
+      return res.status(503).json({
+        ok: false,
+        message: "Database unavailable. Check DATABASE_URL in apps/api/.env",
+      });
     }
-    res.status(400).json({ ok: false, message: e?.message ?? "Import failed" });
+
+    return res.status(400).json({
+      ok: false,
+      message: e?.message ?? "Import failed",
+    });
+  }
+});
+
+app.get("/admin/dashboard/summary", async (_req: Request, res: Response) => {
+  try {
+    const [
+      zonesResult,
+      occupancyResult,
+      lostFoundResult,
+      usersResult,
+      complaintsResult,
+    ] = await Promise.all([
+      pool.query(`
+          SELECT COUNT(*)::int AS total_buildings
+          FROM zones
+        `),
+      pool.query(`
+          SELECT
+            COUNT(*) FILTER (
+              WHERE COALESCE(d.capacity, 0) > 0
+              AND COALESCE(l.pings_last_60s, 0) >= (COALESCE(d.capacity, 0) * 0.9)
+            )::int AS overcrowded_buildings,
+            COUNT(*) FILTER (
+              WHERE COALESCE(d.capacity, 0) > 0
+              AND COALESCE(l.pings_last_60s, 0) >= (COALESCE(d.capacity, 0) * 0.8)
+              AND COALESCE(l.pings_last_60s, 0) < (COALESCE(d.capacity, 0) * 0.9)
+            )::int AS warning_buildings
+          FROM zones z
+          LEFT JOIN zone_details d ON d.zone_id = z.id
+          LEFT JOIN (
+            SELECT
+              matched_zone_id,
+              COUNT(*)::int AS pings_last_60s
+            FROM location_events
+            WHERE matched_zone_id IS NOT NULL
+              AND event_type = 'PING'
+              AND created_at > NOW() - INTERVAL '60 seconds'
+            GROUP BY matched_zone_id
+          ) l ON l.matched_zone_id = z.id
+        `),
+      pool.query(`
+          SELECT
+            COUNT(*)::int AS total_posts,
+            COUNT(*) FILTER (WHERE type = 'lost')::int AS lost_posts,
+            COUNT(*) FILTER (WHERE type = 'found')::int AS found_posts,
+            COUNT(*) FILTER (
+              WHERE created_at >= date_trunc('day', NOW())
+            )::int AS reports_today
+          FROM lost_found_posts
+        `),
+      pool.query(`
+          SELECT COUNT(*)::int AS total_users
+          FROM users
+        `),
+      pool.query(`
+          SELECT
+            COUNT(*)::int AS total_complaints,
+            COUNT(*) FILTER (WHERE status IN ('NEW', 'OPEN', 'PENDING', 'NEED_MORE_INFO'))::int AS active_complaints
+          FROM complaint_cases
+        `),
+    ]);
+
+    const summary = {
+      totalBuildings: zonesResult.rows[0]?.total_buildings ?? 0,
+      overcrowdedBuildings: occupancyResult.rows[0]?.overcrowded_buildings ?? 0,
+      warningBuildings: occupancyResult.rows[0]?.warning_buildings ?? 0,
+      totalLostFoundPosts: lostFoundResult.rows[0]?.total_posts ?? 0,
+      lostPosts: lostFoundResult.rows[0]?.lost_posts ?? 0,
+      foundPosts: lostFoundResult.rows[0]?.found_posts ?? 0,
+      lostItemReportsToday: lostFoundResult.rows[0]?.reports_today ?? 0,
+      totalUsers: usersResult.rows[0]?.total_users ?? 0,
+      totalComplaints: complaintsResult.rows[0]?.total_complaints ?? 0,
+      activeComplaints: complaintsResult.rows[0]?.active_complaints ?? 0,
+    };
+
+    return res.json(summary);
+  } catch (e) {
+    console.error("DB error in GET /admin/dashboard/summary:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.get("/admin/zones/check-id/:id", async (req: Request, res: Response) => {
+  try {
+    const zoneId = String(req.params.id || "").trim();
+
+    if (!zoneId) {
+      return res.status(400).json({
+        ok: false,
+        message: "Zone ID is required.",
+      });
+    }
+
+    const { rows } = await pool.query(
+      `
+      SELECT id, name
+      FROM zones
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [zoneId],
+    );
+
+    return res.json({
+      ok: true,
+      exists: rows.length > 0,
+      zone: rows[0] ?? null,
+    });
+  } catch (e) {
+    console.error("DB error in GET /admin/zones/check-id/:id:", e);
+    return res.status(503).json({
+      ok: false,
+      message: "Database unavailable.",
+    });
+  }
+});
+
+app.patch("/admin/zones/:id/details", async (req: Request, res: Response) => {
+  try {
+    const zoneId = String(req.params.id || "").trim();
+
+    const UpdateZoneDetailsSchema = z.object({
+      area_group: z.string().min(1),
+      capacity: z.number().int().nonnegative(),
+      capacity_mode: z.string().min(1),
+      description: z.string().nullable().optional(),
+    });
+
+    const parsed = UpdateZoneDetailsSchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      return res.status(400).json({
+        ok: false,
+        message: "Invalid update payload.",
+        error: parsed.error.flatten(),
+      });
+    }
+
+    const existingZone = await pool.query(
+      `
+      SELECT id
+      FROM zones
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [zoneId],
+    );
+
+    if (existingZone.rows.length === 0) {
+      return res.status(404).json({
+        ok: false,
+        message: "Zone not found.",
+      });
+    }
+
+    const { area_group, capacity, capacity_mode, description } = parsed.data;
+
+    const result = await pool.query(
+      `
+      INSERT INTO zone_details (
+        zone_id,
+        display_name,
+        capacity,
+        description,
+        status_override,
+        created_at,
+        updated_at,
+        area_group,
+        capacity_mode
+      )
+      VALUES (
+        $1,
+        COALESCE((SELECT display_name FROM zone_details WHERE zone_id = $1), (SELECT name FROM zones WHERE id = $1)),
+        $2,
+        $3,
+        NULL,
+        NOW(),
+        NOW(),
+        $4,
+        $5
+      )
+      ON CONFLICT (zone_id)
+      DO UPDATE SET
+        capacity = EXCLUDED.capacity,
+        description = EXCLUDED.description,
+        updated_at = NOW(),
+        area_group = EXCLUDED.area_group,
+        capacity_mode = EXCLUDED.capacity_mode
+      RETURNING zone_id, display_name, capacity, description, area_group, capacity_mode
+      `,
+      [zoneId, capacity, description ?? "", area_group, capacity_mode],
+    );
+
+    return res.json({
+      ok: true,
+      details: result.rows[0],
+    });
+  } catch (e) {
+    console.error("DB error in PATCH /admin/zones/:id/details:", e);
+    return res.status(503).json({
+      ok: false,
+      message: "Database unavailable.",
+    });
+  }
+});
+
+app.delete("/admin/zones/:id", async (req: Request, res: Response) => {
+  const client = await pool.connect();
+
+  try {
+    const zoneId = String(req.params.id || "").trim();
+
+    await client.query("BEGIN");
+
+    const existingZone = await client.query(
+      `
+      SELECT id
+      FROM zones
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [zoneId],
+    );
+
+    if (existingZone.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        ok: false,
+        message: "Zone not found.",
+      });
+    }
+
+    await client.query(
+      `
+      DELETE FROM zone_details
+      WHERE zone_id = $1
+      `,
+      [zoneId],
+    );
+
+    await client.query(
+      `
+      DELETE FROM zones
+      WHERE id = $1
+      `,
+      [zoneId],
+    );
+
+    await client.query("COMMIT");
+
+    return res.json({
+      ok: true,
+      deletedId: zoneId,
+    });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    console.error("DB error in DELETE /admin/zones/:id:", e);
+    return res.status(503).json({
+      ok: false,
+      message: "Database unavailable.",
+    });
+  } finally {
+    client.release();
   }
 });
 
@@ -659,7 +2447,7 @@ const createComplaintSchema = z.object({
         originalName: z.string(),
         mimeType: z.string(),
         sizeBytes: z.number(),
-      })
+      }),
     )
     .default([]),
 });
@@ -672,16 +2460,7 @@ const reconnectComplaintSchema = z.object({
 const sendComplaintMessageSchema = z.object({
   body: z.string().min(1),
   requestCounseling: z.boolean().optional().default(false),
-  attachments: z
-    .array(
-      z.object({
-        originalName: z.string(),
-        mimeType: z.string(),
-        sizeBytes: z.number(),
-      })
-    )
-    .optional()
-    .default([]),
+  attachmentIds: z.array(z.string().uuid()).optional().default([]),
 });
 
 function generateAnonId() {
@@ -700,16 +2479,22 @@ function classifyComplaintSeverity(text: string) {
   const normalized = text.toLowerCase();
 
   if (
-    ["self-harm", "suicide", "kill", "weapon", "knife", "violence threat", "immediate danger"].some(
-      (keyword) => normalized.includes(keyword)
-    )
+    [
+      "self-harm",
+      "suicide",
+      "kill",
+      "weapon",
+      "knife",
+      "violence threat",
+      "immediate danger",
+    ].some((keyword) => normalized.includes(keyword))
   ) {
     return "CRITICAL";
   }
 
   if (
-    ["threat", "violent", "ragging", "harass", "abuse", "unsafe"].some((keyword) =>
-      normalized.includes(keyword)
+    ["threat", "violent", "ragging", "harass", "abuse", "unsafe"].some(
+      (keyword) => normalized.includes(keyword),
     )
   ) {
     return "HIGH";
@@ -748,7 +2533,7 @@ async function getComplaintSession(req: Request) {
     WHERE session_token = $1
     LIMIT 1
     `,
-    [sessionToken]
+    [sessionToken],
   );
 
   if (rows.length === 0) {
@@ -784,7 +2569,7 @@ async function buildComplaintResponse(complaintId: string) {
     WHERE id = $1
     LIMIT 1
     `,
-    [complaintId]
+    [complaintId],
   );
 
   if (complaintResult.rows.length === 0) {
@@ -795,18 +2580,33 @@ async function buildComplaintResponse(complaintId: string) {
 
   const messagesResult = await pool.query(
     `
-    SELECT
-      id,
-      sender_type,
-      sender_label,
-      body,
-      request_counseling,
-      created_at
-    FROM complaint_messages
-    WHERE complaint_id = $1
-    ORDER BY created_at ASC
-    `,
-    [complaintId]
+  SELECT
+    m.id,
+    m.sender_type,
+    m.sender_label,
+    m.body,
+    m.request_counseling,
+    m.created_at,
+    COALESCE(
+      json_agg(
+        json_build_object(
+          'id', a.id,
+          'originalName', a.original_name,
+          'mimeType', a.mime_type,
+          'sizeBytes', a.size_bytes,
+          'fileUrl', '/uploads/complaints/' || a.storage_path
+        )
+      ) FILTER (WHERE a.id IS NOT NULL),
+      '[]'::json
+    ) AS attachments
+  FROM complaint_messages m
+  LEFT JOIN complaint_attachments a
+    ON a.message_id = m.id
+  WHERE m.complaint_id = $1
+  GROUP BY m.id
+  ORDER BY m.created_at ASC
+  `,
+    [complaintId],
   );
 
   const messages = messagesResult.rows.map((message) => ({
@@ -816,6 +2616,7 @@ async function buildComplaintResponse(complaintId: string) {
     body: message.body,
     requestCounseling: message.request_counseling,
     createdAt: message.created_at,
+    attachments: message.attachments ?? [],
   }));
 
   return {
@@ -853,12 +2654,16 @@ app.post("/api/public/cases", async (req: Request, res: Response) => {
     const anonId = generateAnonId();
     const secret = generateSecret();
     const secretHash = hashSecret(secret);
-    const severity = classifyComplaintSeverity(`${parsed.title} ${parsed.description}`);
+    const severity = classifyComplaintSeverity(
+      `${parsed.title} ${parsed.description}`,
+    );
     const status = "NEW";
     const now = new Date().toISOString();
 
     const sessionToken = crypto.randomBytes(24).toString("hex");
-    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString();
+    const expiresAt = new Date(
+      Date.now() + 1000 * 60 * 60 * 24 * 30,
+    ).toISOString();
 
     await pool.query(
       `
@@ -899,7 +2704,7 @@ app.post("/api/public/cases", async (req: Request, res: Response) => {
         parsed.consent,
         now,
         now,
-      ]
+      ],
     );
 
     await pool.query(
@@ -907,7 +2712,7 @@ app.post("/api/public/cases", async (req: Request, res: Response) => {
       INSERT INTO complaint_sessions (session_token, complaint_id, expires_at)
       VALUES ($1, $2, $3)
       `,
-      [sessionToken, id, expiresAt]
+      [sessionToken, id, expiresAt],
     );
 
     const complaint = await buildComplaintResponse(id);
@@ -923,7 +2728,8 @@ app.post("/api/public/cases", async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Create complaint failed:", error);
     return res.status(400).json({
-      message: error instanceof Error ? error.message : "Could not create complaint",
+      message:
+        error instanceof Error ? error.message : "Could not create complaint",
     });
   }
 });
@@ -940,23 +2746,27 @@ app.post("/api/public/cases/reconnect", async (req: Request, res: Response) => {
       WHERE anon_id = $1 AND secret_hash = $2
       LIMIT 1
       `,
-      [parsed.anonId, secretHash]
+      [parsed.anonId, secretHash],
     );
 
     if (rows.length === 0) {
-      return res.status(401).json({ message: "Invalid Anonymous ID or secret" });
+      return res
+        .status(401)
+        .json({ message: "Invalid Anonymous ID or secret" });
     }
 
     const complaintId = rows[0].id;
     const sessionToken = crypto.randomBytes(24).toString("hex");
-    const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString();
+    const expiresAt = new Date(
+      Date.now() + 1000 * 60 * 60 * 24 * 30,
+    ).toISOString();
 
     await pool.query(
       `
       INSERT INTO complaint_sessions (session_token, complaint_id, expires_at)
       VALUES ($1, $2, $3)
       `,
-      [sessionToken, complaintId, expiresAt]
+      [sessionToken, complaintId, expiresAt],
     );
 
     const complaint = await buildComplaintResponse(complaintId);
@@ -969,7 +2779,10 @@ app.post("/api/public/cases/reconnect", async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Reconnect complaint failed:", error);
     return res.status(400).json({
-      message: error instanceof Error ? error.message : "Could not reconnect complaint",
+      message:
+        error instanceof Error
+          ? error.message
+          : "Could not reconnect complaint",
     });
   }
 });
@@ -981,101 +2794,1818 @@ app.get("/api/public/cases/me", async (req: Request, res: Response) => {
     return res.json(complaint);
   } catch (error) {
     return res.status(401).json({
-      message: error instanceof Error ? error.message : "Could not load complaint",
+      message:
+        error instanceof Error ? error.message : "Could not load complaint",
     });
   }
 });
 
-app.get("/api/public/cases/me/messages", async (req: Request, res: Response) => {
+app.post(
+  "/api/public/cases/me/attachments",
+  upload.single("file") as unknown as RequestHandler,
+  async (req: Request, res: Response) => {
+    try {
+      const session = await getComplaintSession(req);
+
+      if (!req.file) {
+        return res.status(400).json({ message: "No file uploaded" });
+      }
+
+      const attachmentId = crypto.randomUUID();
+
+      await pool.query(
+        `
+        INSERT INTO complaint_attachments (
+          id,
+          complaint_id,
+          original_name,
+          mime_type,
+          size_bytes,
+          storage_path,
+          created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        `,
+        [
+          attachmentId,
+          session.complaint_id,
+          req.file.originalname,
+          req.file.mimetype,
+          req.file.size,
+          req.file.filename,
+        ],
+      );
+
+      return res.status(201).json({
+        id: attachmentId,
+        originalName: req.file.originalname,
+        mimeType: req.file.mimetype,
+        sizeBytes: req.file.size,
+        storagePath: req.file.filename,
+        fileUrl: `/uploads/complaints/${req.file.filename}`,
+      });
+    } catch (error) {
+      console.error("Upload complaint attachment failed:", error);
+      return res.status(400).json({
+        message:
+          error instanceof Error
+            ? error.message
+            : "Could not upload attachment",
+      });
+    }
+  },
+);
+
+app.get(
+  "/api/public/cases/me/messages",
+  async (req: Request, res: Response) => {
+    try {
+      const session = await getComplaintSession(req);
+
+      const { rows } = await pool.query(
+        `
+        SELECT
+          m.id,
+          m.sender_type,
+          m.sender_label,
+          m.body,
+          m.request_counseling,
+          m.created_at,
+          COALESCE(
+            json_agg(
+              json_build_object(
+                'id', a.id,
+                'originalName', a.original_name,
+                'mimeType', a.mime_type,
+                'sizeBytes', a.size_bytes,
+                'fileUrl', '/uploads/complaints/' || a.storage_path
+              )
+            ) FILTER (WHERE a.id IS NOT NULL),
+            '[]'::json
+          ) AS attachments
+        FROM complaint_messages m
+        LEFT JOIN complaint_attachments a
+          ON a.message_id = m.id
+        WHERE m.complaint_id = $1
+        GROUP BY m.id
+        ORDER BY m.created_at ASC
+        `,
+        [session.complaint_id],
+      );
+
+      return res.json(
+        rows.map((message) => ({
+          id: message.id,
+          senderType: message.sender_type,
+          senderLabel: message.sender_label,
+          body: message.body,
+          requestCounseling: message.request_counseling,
+          createdAt: message.created_at,
+          attachments: message.attachments ?? [],
+        })),
+      );
+    } catch (error) {
+      return res.status(401).json({
+        message:
+          error instanceof Error ? error.message : "Could not load messages",
+      });
+    }
+  },
+);
+
+app.post(
+  "/api/public/cases/me/messages",
+  async (req: Request, res: Response) => {
+    try {
+      const session = await getComplaintSession(req);
+      const parsed = sendComplaintMessageSchema.parse(req.body);
+
+      const insertedMessageId = crypto.randomUUID();
+
+      await pool.query(
+        `
+        INSERT INTO complaint_messages (
+          id,
+          complaint_id,
+          sender_type,
+          sender_label,
+          body,
+          request_counseling,
+          created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        `,
+        [
+          insertedMessageId,
+          session.complaint_id,
+          "STUDENT",
+          null,
+          parsed.body,
+          parsed.requestCounseling,
+        ],
+      );
+
+      if (parsed.attachmentIds.length > 0) {
+        await pool.query(
+          `
+          UPDATE complaint_attachments
+          SET message_id = $1
+          WHERE id = ANY($2::uuid[])
+            AND complaint_id = $3
+          `,
+          [insertedMessageId, parsed.attachmentIds, session.complaint_id],
+        );
+      }
+
+      await pool.query(
+        `
+        UPDATE complaint_cases
+        SET
+          status = CASE
+            WHEN $2 = true THEN 'NEED_MORE_INFO'
+            ELSE status
+          END,
+          updated_at = NOW()
+        WHERE id = $1
+        `,
+        [session.complaint_id, parsed.requestCounseling],
+      );
+
+      const complaint = await buildComplaintResponse(session.complaint_id);
+
+      return res.json({
+        complaint,
+        messages: complaint.messages,
+        challengeRequired: false,
+      });
+    } catch (error) {
+      console.error("Send complaint message failed:", error);
+      return res.status(400).json({
+        message:
+          error instanceof Error ? error.message : "Could not send message",
+      });
+    }
+  },
+);
+
+async function createComplaintAdminLog(input: {
+  complaintId: string;
+  actionType: string;
+  actorUserId?: string | null;
+  actorUsername?: string | null;
+  actorEmail?: string | null;
+  details?: Record<string, unknown>;
+}) {
+  await pool.query(
+    `
+    INSERT INTO complaint_admin_logs (
+      id,
+      complaint_id,
+      action_type,
+      actor_user_id,
+      actor_username,
+      actor_email,
+      details_json,
+      created_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, NOW())
+    `,
+    [
+      crypto.randomUUID(),
+      input.complaintId,
+      input.actionType,
+      input.actorUserId ?? null,
+      input.actorUsername ?? null,
+      input.actorEmail ?? null,
+      JSON.stringify(input.details ?? {}),
+    ],
+  );
+}
+
+app.get("/admin/complaints", async (_req: Request, res: Response) => {
   try {
-    const session = await getComplaintSession(req);
+    const { rows } = await pool.query(
+      `
+      SELECT
+        c.id,
+        c.anon_id,
+        c.title,
+        c.category,
+        c.description,
+        c.severity,
+        c.status,
+        c.assigned_team,
+        c.location_text,
+        c.incident_at,
+        c.people_involved,
+        c.created_at,
+        c.updated_at,
+        COUNT(DISTINCT m.id)::int AS message_count,
+        COUNT(DISTINCT s.session_token)::int AS active_session_count
+      FROM complaint_cases c
+      LEFT JOIN complaint_messages m
+        ON m.complaint_id = c.id
+      LEFT JOIN complaint_sessions s
+        ON s.complaint_id = c.id
+       AND s.expires_at > NOW()
+      GROUP BY c.id
+      ORDER BY c.created_at DESC
+      `,
+    );
+
+    return res.json(
+      rows.map((row) => ({
+        id: row.id,
+        anonId: row.anon_id,
+        title: row.title,
+        category: row.category,
+        description: row.description,
+        severity: row.severity,
+        status: row.status,
+        assignedTeam: row.assigned_team,
+        locationText: row.location_text,
+        incidentAt: row.incident_at,
+        peopleInvolved: row.people_involved,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        messageCount: row.message_count,
+        activeSessionCount: row.active_session_count,
+      })),
+    );
+  } catch (e) {
+    console.error("DB error in GET /admin/complaints:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.get("/admin/complaints/logs", async (req: Request, res: Response) => {
+  try {
+    const from = String(req.query.from ?? "").trim();
+    const to = String(req.query.to ?? "").trim();
 
     const { rows } = await pool.query(
       `
       SELECT
-        id,
-        sender_type,
-        sender_label,
-        body,
-        request_counseling,
-        created_at
-      FROM complaint_messages
-      WHERE complaint_id = $1
-      ORDER BY created_at ASC
+        l.id,
+        l.complaint_id,
+        c.anon_id,
+        c.title,
+        l.action_type,
+        l.actor_user_id,
+        l.actor_username,
+        l.actor_email,
+        l.details_json,
+        l.created_at
+      FROM complaint_admin_logs l
+      INNER JOIN complaint_cases c
+        ON c.id = l.complaint_id
+      WHERE ($1 = '' OR l.created_at >= $1::timestamptz)
+        AND ($2 = '' OR l.created_at <= $2::timestamptz)
+      ORDER BY l.created_at DESC
+      LIMIT 500
       `,
-      [session.complaint_id]
+      [from, to],
     );
 
     return res.json(
-      rows.map((message) => ({
+      rows.map((row) => ({
+        id: row.id,
+        complaintId: row.complaint_id,
+        anonId: row.anon_id,
+        title: row.title,
+        actionType: row.action_type,
+        actorUserId: row.actor_user_id,
+        actorUsername: row.actor_username,
+        actorEmail: row.actor_email,
+        details: row.details_json,
+        createdAt: row.created_at,
+      })),
+    );
+  } catch (e) {
+    console.error("DB error in GET /admin/complaints/logs:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.get("/admin/complaints/:id", async (req: Request, res: Response) => {
+  try {
+    const complaintId = req.params.id;
+
+    const complaintResult = await pool.query(
+      `
+      SELECT
+        id,
+        anon_id,
+        title,
+        category,
+        description,
+        severity,
+        status,
+        assigned_team,
+        location_text,
+        incident_at,
+        people_involved,
+        created_at,
+        updated_at
+      FROM complaint_cases
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [complaintId],
+    );
+
+    if (complaintResult.rows.length === 0) {
+      return res.status(404).json({
+        message: "Complaint not found",
+      });
+    }
+
+    const sessionsResult = await pool.query(
+      `
+      SELECT
+        session_token,
+        expires_at
+      FROM complaint_sessions
+      WHERE complaint_id = $1
+      ORDER BY expires_at DESC
+      `,
+      [complaintId],
+    );
+
+    const messagesResult = await pool.query(
+      `
+      SELECT
+        m.id,
+        m.sender_type,
+        m.sender_label,
+        m.body,
+        m.request_counseling,
+        m.created_at,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'id', a.id,
+              'originalName', a.original_name,
+              'mimeType', a.mime_type,
+              'sizeBytes', a.size_bytes,
+              'fileUrl', '/uploads/complaints/' || a.storage_path
+            )
+          ) FILTER (WHERE a.id IS NOT NULL),
+          '[]'::json
+        ) AS attachments
+      FROM complaint_messages m
+      LEFT JOIN complaint_attachments a
+        ON a.message_id = m.id
+      WHERE m.complaint_id = $1
+      GROUP BY m.id
+      ORDER BY m.created_at ASC
+      `,
+      [complaintId],
+    );
+
+    const row = complaintResult.rows[0];
+
+    return res.json({
+      id: row.id,
+      anonId: row.anon_id,
+      title: row.title,
+      category: row.category,
+      description: row.description,
+      severity: row.severity,
+      status: row.status,
+      assignedTeam: row.assigned_team,
+      locationText: row.location_text,
+      incidentAt: row.incident_at,
+      peopleInvolved: row.people_involved,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      sessions: sessionsResult.rows.map((session) => ({
+        expiresAt: session.expires_at,
+        isActive: new Date(session.expires_at).getTime() > Date.now(),
+      })),
+      messages: messagesResult.rows.map((message) => ({
         id: message.id,
         senderType: message.sender_type,
         senderLabel: message.sender_label,
         body: message.body,
         requestCounseling: message.request_counseling,
         createdAt: message.created_at,
-      }))
-    );
-  } catch (error) {
-    return res.status(401).json({
-      message: error instanceof Error ? error.message : "Could not load messages",
+        attachments: message.attachments ?? [],
+      })),
+    });
+  } catch (e) {
+    console.error("DB error in GET /admin/complaints/:id:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
     });
   }
 });
 
-app.post("/api/public/cases/me/messages", async (req: Request, res: Response) => {
-  try {
-    const session = await getComplaintSession(req);
-    const parsed = sendComplaintMessageSchema.parse(req.body);
+app.patch(
+  "/admin/complaints/:id/status",
+  async (req: Request, res: Response) => {
+    try {
+      const complaintId = req.params.id;
 
-    await pool.query(
-      `
-      INSERT INTO complaint_messages (
+      const UpdateComplaintStatusSchema = z.object({
+        status: z.string().min(1),
+        assignedTeam: z.string().nullable().optional(),
+      });
+
+      const parsed = UpdateComplaintStatusSchema.safeParse(req.body);
+
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: "Invalid complaint update payload",
+          error: parsed.error.flatten(),
+        });
+      }
+
+      const result = await pool.query(
+        `
+      UPDATE complaint_cases
+      SET
+        status = $2,
+        assigned_team = $3,
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING
         id,
-        complaint_id,
-        sender_type,
-        sender_label,
-        body,
-        request_counseling,
-        created_at
+        anon_id,
+        title,
+        category,
+        description,
+        severity,
+        status,
+        assigned_team,
+        location_text,
+        incident_at,
+        people_involved,
+        created_at,
+        updated_at
+      `,
+        [complaintId, parsed.data.status, parsed.data.assignedTeam ?? null],
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({
+          message: "Complaint not found",
+        });
+      }
+
+      await createComplaintAdminLog({
+        complaintId,
+        actionType: "STATUS_UPDATED",
+        actorUserId: String(req.headers["x-admin-user-id"] ?? ""),
+        actorUsername: String(req.headers["x-admin-username"] ?? ""),
+        actorEmail: String(req.headers["x-admin-email"] ?? ""),
+        details: {
+          newStatus: parsed.data.status,
+          assignedTeam: parsed.data.assignedTeam ?? null,
+        },
+      });
+
+      const row = result.rows[0];
+
+      return res.json({
+        id: row.id,
+        anonId: row.anon_id,
+        title: row.title,
+        category: row.category,
+        description: row.description,
+        severity: row.severity,
+        status: row.status,
+        assignedTeam: row.assigned_team,
+        locationText: row.location_text,
+        incidentAt: row.incident_at,
+        peopleInvolved: row.people_involved,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      });
+    } catch (e) {
+      console.error("DB error in PATCH /admin/complaints/:id/status:", e);
+
+      return res.status(503).json({
+        error: "Database unavailable.",
+      });
+    }
+  },
+);
+
+app.get(
+  "/admin/complaints/:id/messages",
+  async (req: Request, res: Response) => {
+    try {
+      const complaintId = req.params.id;
+
+      const complaintCheck = await pool.query(
+        `
+      SELECT id
+      FROM complaint_cases
+      WHERE id = $1
+      LIMIT 1
+      `,
+        [complaintId],
+      );
+
+      if (complaintCheck.rows.length === 0) {
+        return res.status(404).json({
+          message: "Complaint not found",
+        });
+      }
+
+      const { rows } = await pool.query(
+        `
+      SELECT
+        m.id,
+        m.sender_type,
+        m.sender_label,
+        m.body,
+        m.request_counseling,
+        m.created_at,
+        COALESCE(
+          json_agg(
+            json_build_object(
+              'id', a.id,
+              'originalName', a.original_name,
+              'mimeType', a.mime_type,
+              'sizeBytes', a.size_bytes,
+              'fileUrl', '/uploads/complaints/' || a.storage_path
+            )
+          ) FILTER (WHERE a.id IS NOT NULL),
+          '[]'::json
+        ) AS attachments
+      FROM complaint_messages m
+      LEFT JOIN complaint_attachments a
+        ON a.message_id = m.id
+      WHERE m.complaint_id = $1
+      GROUP BY m.id
+      ORDER BY m.created_at ASC
+      `,
+        [complaintId],
+      );
+
+      return res.json(
+        rows.map((message) => ({
+          id: message.id,
+          senderType: message.sender_type,
+          senderLabel: message.sender_label,
+          body: message.body,
+          requestCounseling: message.request_counseling,
+          createdAt: message.created_at,
+          attachments: message.attachments ?? [],
+        })),
+      );
+    } catch (e) {
+      console.error("DB error in GET /admin/complaints/:id/messages:", e);
+      return res.status(503).json({
+        error: "Database unavailable.",
+      });
+    }
+  },
+);
+
+const adminSendComplaintMessageSchema = z.object({
+  body: z.string().min(1),
+  senderLabel: z.string().optional().nullable(),
+  requestCounseling: z.boolean().optional().default(false),
+});
+
+app.post(
+  "/admin/complaints/:id/messages",
+  async (req: Request, res: Response) => {
+    try {
+      const complaintId = req.params.id;
+      const parsed = adminSendComplaintMessageSchema.parse(req.body);
+
+      const complaintCheck = await pool.query(
+        `
+        SELECT id
+        FROM complaint_cases
+        WHERE id = $1
+        LIMIT 1
+        `,
+        [complaintId],
+      );
+
+      if (complaintCheck.rows.length === 0) {
+        return res.status(404).json({
+          message: "Complaint not found",
+        });
+      }
+
+      const insertedId = crypto.randomUUID();
+
+      const result = await pool.query(
+        `
+        INSERT INTO complaint_messages (
+          id,
+          complaint_id,
+          sender_type,
+          sender_label,
+          body,
+          request_counseling,
+          created_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        RETURNING
+          id,
+          sender_type,
+          sender_label,
+          body,
+          request_counseling,
+          created_at
+        `,
+        [
+          insertedId,
+          complaintId,
+          "ADMIN",
+          parsed.senderLabel ?? "Support Team",
+          parsed.body,
+          parsed.requestCounseling,
+        ],
+      );
+
+      await createComplaintAdminLog({
+        complaintId,
+        actionType: "CHAT_SENT",
+        actorUserId: String(req.headers["x-admin-user-id"] ?? ""),
+        actorUsername: String(req.headers["x-admin-username"] ?? ""),
+        actorEmail: String(req.headers["x-admin-email"] ?? ""),
+        details: {
+          messageId: insertedId,
+          senderLabel: parsed.senderLabel ?? "Support Team",
+        },
+      });
+
+      const row = result.rows[0];
+
+      return res.status(201).json({
+        id: row.id,
+        senderType: row.sender_type,
+        senderLabel: row.sender_label,
+        body: row.body,
+        requestCounseling: row.request_counseling,
+        createdAt: row.created_at,
+        attachments: [],
+      });
+    } catch (e: any) {
+      console.error("DB error in POST /admin/complaints/:id/messages:", e);
+      return res.status(400).json({
+        message: e?.message ?? "Could not send message",
+      });
+    }
+  },
+);
+
+// 🔹 EDUHUB EXAMS
+
+const EduHubExamTypeSchema = z.union([
+  z.literal("Mock Exam"),
+  z.literal("Mid Exam"),
+  z.literal("Spot Test"),
+  z.literal("Practical Test"),
+  z.literal("Viva"),
+  z.literal("Presentation"),
+  z.literal("Final Exam"),
+  z.literal("Repeat Exam"),
+]);
+
+const EduHubCreateExamSchema = z.object({
+  semester: z.string().min(2).max(100),
+  examType: EduHubExamTypeSchema,
+  moduleCode: z.string().min(2).max(50),
+  moduleName: z.string().min(2).max(150),
+  examDate: z.string().min(1),
+  startTime: z.string().min(1),
+  endTime: z.string().min(1),
+  sessionNumber: z.string().max(50).optional().nullable(),
+  seatNumber: z.string().max(50).optional().nullable(),
+  venue: z.string().max(150).optional().nullable(),
+  notes: z.string().max(2000).optional().nullable(),
+  uploadedByUserId: z.string().min(1),
+  uploadedByUsername: z.string().min(1).max(120),
+});
+
+function parseExamDateTimeLocal(dateValue: string, timeValue: string) {
+  const safeDate = String(dateValue || "").slice(0, 10);
+  const safeTime = String(timeValue || "").slice(0, 5);
+
+  if (!safeDate || !safeTime) return null;
+
+  const [year, month, day] = safeDate.split("-").map(Number);
+  const [hour, minute] = safeTime.split(":").map(Number);
+
+  if (!year || !month || !day || Number.isNaN(hour) || Number.isNaN(minute)) {
+    return null;
+  }
+
+  const value = new Date(year, month - 1, day, hour, minute, 0, 0);
+
+  if (Number.isNaN(value.getTime())) {
+    return null;
+  }
+
+  return value;
+}
+
+function getEduHubExamLifecycleMeta(
+  examDate: string,
+  startTime: string,
+  endTime: string,
+) {
+  const now = new Date();
+  const startAt = parseExamDateTimeLocal(examDate, startTime);
+  const endAt = parseExamDateTimeLocal(examDate, endTime);
+
+  if (!startAt || !endAt) {
+    return {
+      isUpcoming: false,
+      isOngoing: false,
+      isGraceVisible: false,
+      shouldAutoRemove: false,
+      removeAfterAt: null as string | null,
+    };
+  }
+
+  const removeAfterAt = new Date(endAt.getTime() + 24 * 60 * 60 * 1000);
+
+  return {
+    isUpcoming: startAt.getTime() > now.getTime(),
+    isOngoing:
+      startAt.getTime() <= now.getTime() && endAt.getTime() >= now.getTime(),
+    isGraceVisible:
+      endAt.getTime() < now.getTime() &&
+      removeAfterAt.getTime() > now.getTime(),
+    shouldAutoRemove: removeAfterAt.getTime() <= now.getTime(),
+    removeAfterAt: removeAfterAt.toISOString(),
+  };
+}
+
+function mapEduHubExamRow(row: any) {
+  const lifecycle = getEduHubExamLifecycleMeta(
+    row.exam_date,
+    row.start_time,
+    row.end_time,
+  );
+
+  return {
+    id: row.id,
+    semester: row.semester,
+    examType: row.exam_type,
+    moduleCode: row.module_code,
+    moduleName: row.module_name,
+    examDate: row.exam_date,
+    startTime: row.start_time,
+    endTime: row.end_time,
+    sessionNumber: row.session_number,
+    seatNumber: row.seat_number,
+    venue: row.venue,
+    notes: row.notes,
+    uploadedByUserId: row.uploaded_by_user_id,
+    uploadedByUsername: row.uploaded_by_username,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    isUpcoming: lifecycle.isUpcoming,
+    isOngoing: lifecycle.isOngoing,
+    isGraceVisible: lifecycle.isGraceVisible,
+    shouldAutoRemove: lifecycle.shouldAutoRemove,
+    removeAfterAt: lifecycle.removeAfterAt,
+  };
+}
+
+async function resolveEduHubUserId(input: {
+  uploadedByUserId?: string;
+  uploadedByUsername?: string;
+}) {
+  const uploadedByUserId = String(input.uploadedByUserId ?? "").trim();
+  const uploadedByUsername = String(input.uploadedByUsername ?? "").trim();
+
+  if (uploadedByUserId) {
+    return uploadedByUserId;
+  }
+
+  if (!uploadedByUsername) {
+    return null;
+  }
+
+  const { rows } = await pool.query(
+    `
+    SELECT id
+    FROM users
+    WHERE LOWER(username) = LOWER($1)
+    LIMIT 1
+    `,
+    [uploadedByUsername],
+  );
+
+  if (rows.length === 0) {
+    return null;
+  }
+
+  return String(rows[0].id);
+}
+
+// 🔹 EDUHUB NOTES
+const EduHubCreateTextNoteSchema = z.object({
+  title: z.string().min(3).max(200),
+  module: z.string().min(2).max(100),
+  noteType: z.literal("Text"),
+  contentText: z.string().min(10),
+  uploadedByUserId: z.string().min(1),
+  uploadedByUsername: z.string().min(1).max(120),
+});
+
+const EduHubUploadNoteBodySchema = z.object({
+  title: z.string().min(3).max(200),
+  module: z.string().min(2).max(100),
+  noteType: z.union([z.literal("PDF"), z.literal("Image")]),
+  uploadedByUserId: z.string().min(1),
+  uploadedByUsername: z.string().min(1).max(120),
+});
+
+function mapEduHubRow(row: any) {
+  return {
+    id: row.id,
+    title: row.title,
+    module: row.module,
+    noteType: row.note_type,
+    contentText: row.content_text,
+    fileUrl: row.file_url,
+    fileName: row.file_name,
+    mimeType: row.mime_type,
+    uploadedByUserId: row.uploaded_by_user_id,
+    uploadedByUsername: row.uploaded_by_username,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+//
+// 🔹 EDUHUB NOTES
+//
+
+app.post("/eduhub/notes", async (req: Request, res: Response) => {
+  const parsed = EduHubCreateTextNoteSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Invalid note data",
+      error: parsed.error.flatten(),
+    });
+  }
+
+  const data = parsed.data;
+
+  try {
+    const result = await pool.query(
+      `
+      INSERT INTO eduhub_notes (
+        id,
+        title,
+        module,
+        note_type,
+        content_text,
+        file_url,
+        file_name,
+        mime_type,
+        uploaded_by_user_id,
+        uploaded_by_username,
+        created_at,
+        updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      VALUES (
+        $1,$2,$3,$4,$5,NULL,NULL,NULL,$6,$7,NOW(),NOW()
+      )
+      RETURNING *
       `,
       [
         crypto.randomUUID(),
-        session.complaint_id,
-        "STUDENT",
-        "You",
-        parsed.body,
-        parsed.requestCounseling,
-      ]
+        data.title.trim(),
+        data.module.trim(),
+        data.noteType,
+        data.contentText.trim(),
+        data.uploadedByUserId,
+        data.uploadedByUsername.trim(),
+      ],
     );
 
-    await pool.query(
+    return res.status(201).json(mapEduHubRow(result.rows[0]));
+  } catch (e) {
+    console.error("DB error in POST /eduhub/notes:", e);
+    return res.status(503).json({
+      message: "Failed to create text note",
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.post(
+  "/eduhub/notes/upload",
+  eduHubUpload.single("file") as unknown as RequestHandler,
+  async (req: Request, res: Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          message: "No file uploaded",
+        });
+      }
+
+      const parsed = EduHubUploadNoteBodySchema.safeParse(req.body);
+
+      if (!parsed.success) {
+        return res.status(400).json({
+          message: "Invalid note upload data",
+          error: parsed.error.flatten(),
+        });
+      }
+
+      const data = parsed.data;
+
+      const fileUrl = `/uploads/eduhub/${req.file.filename}`;
+
+      const result = await pool.query(
+        `
+        INSERT INTO eduhub_notes (
+          id,
+          title,
+          module,
+          note_type,
+          content_text,
+          file_url,
+          file_name,
+          mime_type,
+          uploaded_by_user_id,
+          uploaded_by_username,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          $1,$2,$3,$4,NULL,$5,$6,$7,$8,$9,NOW(),NOW()
+        )
+        RETURNING *
+        `,
+        [
+          crypto.randomUUID(),
+          data.title.trim(),
+          data.module.trim(),
+          data.noteType,
+          fileUrl,
+          req.file.originalname,
+          req.file.mimetype,
+          data.uploadedByUserId,
+          data.uploadedByUsername.trim(),
+        ],
+      );
+
+      return res.status(201).json(mapEduHubRow(result.rows[0]));
+    } catch (e: any) {
+      console.error("DB error in POST /eduhub/notes/upload:", e);
+
+      return res.status(400).json({
+        message: e?.message ?? "Failed to upload note",
+      });
+    }
+  },
+);
+
+app.get("/eduhub/notes", async (req: Request, res: Response) => {
+  const uploadedByUserId = String(req.query.uploadedByUserId ?? "").trim();
+  const search = String(req.query.search ?? "").trim();
+
+  try {
+    const { rows } = await pool.query(
       `
-      UPDATE complaint_cases
-      SET
-        status = CASE
-          WHEN $2 = true THEN 'NEED_MORE_INFO'
-          ELSE status
-        END,
-        updated_at = NOW()
-      WHERE id = $1
+      SELECT *
+      FROM eduhub_notes
+      WHERE ($1 = '' OR uploaded_by_user_id = $1)
+        AND (
+          $2 = ''
+          OR title ILIKE '%' || $2 || '%'
+          OR module ILIKE '%' || $2 || '%'
+          OR uploaded_by_username ILIKE '%' || $2 || '%'
+          OR content_text ILIKE '%' || $2 || '%'
+        )
+      ORDER BY updated_at DESC, created_at DESC
       `,
-      [session.complaint_id, parsed.requestCounseling]
+      [uploadedByUserId, search],
     );
 
-    const complaint = await buildComplaintResponse(session.complaint_id);
+    return res.json(rows.map(mapEduHubRow));
+  } catch (e) {
+    console.error("DB error in GET /eduhub/notes:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.get("/eduhub/notes/:id", async (req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT *
+      FROM eduhub_notes
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [req.params.id],
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        message: "Note not found",
+      });
+    }
+
+    return res.json(mapEduHubRow(rows[0]));
+  } catch (e) {
+    console.error("DB error in GET /eduhub/notes/:id:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.delete("/eduhub/notes/:id", async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query(
+      `
+      DELETE FROM eduhub_notes
+      WHERE id = $1
+      RETURNING *
+      `,
+      [req.params.id],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        message: "Note not found",
+      });
+    }
+
+    const row = result.rows[0];
+
+    if (row.file_url) {
+      const filePath = path.join(
+        process.cwd(),
+        row.file_url.replace(/^\/+/, ""),
+      );
+      fs.unlink(filePath, (err) => {
+        if (err) {
+          console.warn("Failed to delete EduHub file:", filePath, err.message);
+        }
+      });
+    }
 
     return res.json({
-      complaint,
-      messages: complaint.messages,
-      challengeRequired: false,
+      ok: true,
+      deletedId: row.id,
     });
-  } catch (error) {
-    console.error("Send complaint message failed:", error);
+  } catch (e) {
+    console.error("DB error in DELETE /eduhub/notes/:id:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+//
+// 🔹 EDUHUB EXAMS
+//
+
+app.post("/eduhub/exams", async (req: Request, res: Response) => {
+  const parsed = EduHubCreateExamSchema.safeParse(req.body);
+
+  if (!parsed.success) {
     return res.status(400).json({
-      message: error instanceof Error ? error.message : "Could not send message",
+      message: "Invalid exam entry data",
+      error: parsed.error.flatten(),
+    });
+  }
+
+  const data = parsed.data;
+
+  try {
+    const result = await pool.query(
+      `
+      INSERT INTO eduhub_exam_entries (
+        id,
+        semester,
+        exam_type,
+        module_code,
+        module_name,
+        exam_date,
+        start_time,
+        end_time,
+        session_number,
+        seat_number,
+        venue,
+        notes,
+        uploaded_by_user_id,
+        uploaded_by_username,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),NOW()
+      )
+      RETURNING *
+      `,
+      [
+        crypto.randomUUID(),
+        data.semester.trim(),
+        data.examType,
+        data.moduleCode.trim(),
+        data.moduleName.trim(),
+        data.examDate,
+        data.startTime,
+        data.endTime,
+        data.sessionNumber?.trim() || null,
+        data.seatNumber?.trim() || null,
+        data.venue?.trim() || null,
+        data.notes?.trim() || null,
+        data.uploadedByUserId,
+        data.uploadedByUsername.trim(),
+      ],
+    );
+
+    return res.status(201).json(mapEduHubExamRow(result.rows[0]));
+  } catch (e) {
+    console.error("DB error in POST /eduhub/exams:", e);
+    return res.status(503).json({
+      message: "Failed to create exam entry",
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.get("/eduhub/exams", async (req: Request, res: Response) => {
+  const semester = String(req.query.semester ?? "").trim();
+  const examType = String(req.query.examType ?? "").trim();
+  const uploadedByUserId = String(req.query.uploadedByUserId ?? "").trim();
+  const uploadedByUsername = String(req.query.uploadedByUsername ?? "").trim();
+
+  try {
+    const resolvedUserId = await resolveEduHubUserId({
+      uploadedByUserId,
+      uploadedByUsername,
+    });
+
+    if (!resolvedUserId) {
+      return res.status(400).json({
+        message: "uploadedByUserId or uploadedByUsername is required",
+      });
+    }
+
+    const { rows } = await pool.query(
+      `
+      SELECT *
+      FROM eduhub_exam_entries
+      WHERE uploaded_by_user_id = $1
+        AND ($2 = '' OR semester = $2)
+        AND ($3 = '' OR exam_type = $3)
+      ORDER BY exam_date ASC, start_time ASC, created_at DESC
+      `,
+      [resolvedUserId, semester, examType],
+    );
+
+    const visibleRows = rows
+      .map(mapEduHubExamRow)
+      .filter((item) => !item.shouldAutoRemove);
+
+    return res.json(visibleRows);
+  } catch (e) {
+    console.error("DB error in GET /eduhub/exams:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.get("/eduhub/exams/:id", async (req: Request, res: Response) => {
+  const uploadedByUserId = String(req.query.uploadedByUserId ?? "").trim();
+  const uploadedByUsername = String(req.query.uploadedByUsername ?? "").trim();
+
+  try {
+    const resolvedUserId = await resolveEduHubUserId({
+      uploadedByUserId,
+      uploadedByUsername,
+    });
+
+    if (!resolvedUserId) {
+      return res.status(400).json({
+        message: "uploadedByUserId or uploadedByUsername is required",
+      });
+    }
+
+    const { rows } = await pool.query(
+      `
+      SELECT *
+      FROM eduhub_exam_entries
+      WHERE id = $1
+        AND uploaded_by_user_id = $2
+      LIMIT 1
+      `,
+      [req.params.id, resolvedUserId],
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        message: "Exam entry not found",
+      });
+    }
+
+    const mapped = mapEduHubExamRow(rows[0]);
+
+    if (mapped.shouldAutoRemove) {
+      return res.status(404).json({
+        message: "Exam entry not found",
+      });
+    }
+
+    return res.json(mapped);
+  } catch (e) {
+    console.error("DB error in GET /eduhub/exams/:id:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.delete("/eduhub/exams/:id", async (req: Request, res: Response) => {
+  const uploadedByUserId = String(req.query.uploadedByUserId ?? "").trim();
+  const uploadedByUsername = String(req.query.uploadedByUsername ?? "").trim();
+
+  try {
+    const resolvedUserId = await resolveEduHubUserId({
+      uploadedByUserId,
+      uploadedByUsername,
+    });
+
+    if (!resolvedUserId) {
+      return res.status(400).json({
+        message: "uploadedByUserId or uploadedByUsername is required",
+      });
+    }
+
+    const result = await pool.query(
+      `
+      DELETE FROM eduhub_exam_entries
+      WHERE id = $1
+        AND uploaded_by_user_id = $2
+      RETURNING id
+      `,
+      [req.params.id, resolvedUserId],
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        message: "Exam entry not found",
+      });
+    }
+
+    return res.json({
+      ok: true,
+      deletedId: result.rows[0].id,
+    });
+  } catch (e) {
+    console.error("DB error in DELETE /eduhub/exams/:id:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+//
+// 🔹 EDUHUB FLASHCARDS
+//
+
+const EduHubCreateFlashcardSetSchema = z.object({
+  moduleCode: z.string().min(2).max(50),
+  moduleName: z.string().min(2).max(150),
+  examEntryId: z.string().uuid().optional().nullable(),
+  createdByUserId: z.string().min(1),
+  createdByUsername: z.string().min(1).max(120),
+});
+
+const EduHubGenerateFlashcardsSchema = z.object({
+  moduleCode: z.string().min(2).max(50),
+  moduleName: z.string().min(2).max(150),
+  examEntryId: z.string().uuid().optional().nullable(),
+  createdByUserId: z.string().min(1),
+  createdByUsername: z.string().min(1).max(120),
+  requestedCount: z.number().int().min(5).max(30).optional().default(15),
+});
+
+function mapEduHubFlashcardSetRow(row: any) {
+  return {
+    id: row.id,
+    moduleCode: row.module_code,
+    moduleName: row.module_name,
+    examEntryId: row.exam_entry_id,
+    createdByUserId: row.created_by_user_id,
+    createdByUsername: row.created_by_username,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function getEduHubFlashcardSourceText(input: {
+  moduleCode: string;
+  moduleName: string;
+  createdByUserId: string;
+  examEntryId?: string | null;
+}) {
+  const chunks: string[] = [];
+
+  chunks.push(`Module Code: ${input.moduleCode}`);
+  chunks.push(`Module Name: ${input.moduleName}`);
+
+  if (input.examEntryId) {
+    const examResult = await pool.query(
+      `
+      SELECT module_code, module_name, notes, exam_type, semester
+      FROM eduhub_exam_entries
+      WHERE id = $1
+        AND uploaded_by_user_id = $2
+      LIMIT 1
+      `,
+      [input.examEntryId, input.createdByUserId],
+    );
+
+    if (examResult.rows.length > 0) {
+      const exam = examResult.rows[0];
+      chunks.push(`Exam Type: ${exam.exam_type ?? ""}`);
+      chunks.push(`Semester: ${exam.semester ?? ""}`);
+      chunks.push(`Exam Notes: ${exam.notes ?? ""}`);
+    }
+  }
+
+  const notesResult = await pool.query(
+    `
+    SELECT title, module, note_type, content_text, file_name
+    FROM eduhub_notes
+    WHERE uploaded_by_user_id = $1
+      AND (
+        LOWER(module) = LOWER($2)
+        OR LOWER(module) = LOWER($3)
+        OR title ILIKE '%' || $2 || '%'
+        OR title ILIKE '%' || $3 || '%'
+        OR content_text ILIKE '%' || $2 || '%'
+        OR content_text ILIKE '%' || $3 || '%'
+      )
+    ORDER BY updated_at DESC, created_at DESC
+    LIMIT 10
+    `,
+    [input.createdByUserId, input.moduleCode, input.moduleName],
+  );
+
+  for (const row of notesResult.rows) {
+    chunks.push(
+      `
+Note Title: ${row.title ?? ""}
+Note Module: ${row.module ?? ""}
+Note Type: ${row.note_type ?? ""}
+Text Content: ${row.content_text ?? ""}
+File Name: ${row.file_name ?? ""}
+    `.trim(),
+    );
+  }
+
+  return chunks.join("\n\n").trim();
+}
+
+function extractJsonArrayFromText(raw: string) {
+  const start = raw.indexOf("[");
+  const end = raw.lastIndexOf("]");
+
+  if (start === -1 || end === -1 || end < start) {
+    return null;
+  }
+
+  const candidate = raw.slice(start, end + 1);
+
+  try {
+    const parsed = JSON.parse(candidate);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+const EduHubGeneratedFlashcardSchema = z.object({
+  question: z.string().min(5).max(300),
+  answer: z.string().min(5).max(500),
+});
+
+const EduHubGeneratedFlashcardsArraySchema = z
+  .array(EduHubGeneratedFlashcardSchema)
+  .min(5)
+  .max(30);
+
+
+  
+app.post(
+  "/eduhub/flashcard-sets/generate",
+  async (req: Request, res: Response) => {
+    const parsed = EduHubGenerateFlashcardsSchema.safeParse(req.body);
+
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Invalid flashcard generation data",
+        error: parsed.error.flatten(),
+      });
+    }
+
+    const data = parsed.data;
+
+    try {
+      const sourceText = await getEduHubFlashcardSourceText({
+        moduleCode: data.moduleCode.trim(),
+        moduleName: data.moduleName.trim(),
+        createdByUserId: data.createdByUserId.trim(),
+        examEntryId: data.examEntryId ?? null,
+      });
+
+      const prompt = `
+You are generating revision flashcards for a university student.
+
+Create exactly ${data.requestedCount} flashcards.
+
+Rules:
+- Return ONLY a JSON array
+- No markdown
+- No explanation
+- Each item must have:
+  - question
+  - answer
+- Keep questions clear and exam-focused
+- Keep answers concise but useful
+- Avoid duplicates
+- Cover definitions, concepts, comparisons, processes, and key facts
+
+Module context:
+${sourceText || `Module Code: ${data.moduleCode}\nModule Name: ${data.moduleName}`}
+`.trim();
+
+      const ollamaResponse = await fetch("http://127.0.0.1:11434/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "llama3.2:3b",
+          messages: [
+            {
+              role: "system",
+              content:
+                "You generate accurate student-friendly flashcards and return strict JSON only.",
+            },
+            {
+              role: "user",
+              content: prompt,
+            },
+          ],
+          stream: false,
+        }),
+      });
+
+      if (!ollamaResponse.ok) {
+        const text = await ollamaResponse.text();
+        console.error("Ollama flashcard generation error:", text);
+
+        return res.status(503).json({
+          message: "Flashcard AI service is unavailable right now.",
+        });
+      }
+
+      const aiResult: any = await ollamaResponse.json();
+      const rawText = aiResult?.message?.content?.trim() || "";
+      const parsedJson = extractJsonArrayFromText(rawText);
+
+      if (!parsedJson) {
+        return res.status(500).json({
+          message: "AI returned invalid flashcard format.",
+        });
+      }
+
+      const validatedCards =
+        EduHubGeneratedFlashcardsArraySchema.safeParse(parsedJson);
+
+      if (!validatedCards.success) {
+        return res.status(500).json({
+          message: "Generated flashcards failed validation.",
+          error: validatedCards.error.flatten(),
+        });
+      }
+
+      const setResult = await pool.query(
+        `
+      INSERT INTO eduhub_flashcard_sets (
+        id,
+        module_code,
+        module_name,
+        exam_entry_id,
+        created_by_user_id,
+        created_by_username,
+        created_at,
+        updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
+      RETURNING *
+      `,
+        [
+          crypto.randomUUID(),
+          data.moduleCode.trim(),
+          data.moduleName.trim(),
+          data.examEntryId ?? null,
+          data.createdByUserId.trim(),
+          data.createdByUsername.trim(),
+        ],
+      );
+
+      return res.status(201).json({
+        set: mapEduHubFlashcardSetRow(setResult.rows[0]),
+        cards: validatedCards.data.map((card, index) => ({
+          id: crypto.randomUUID(),
+          question: card.question.trim(),
+          answer: card.answer.trim(),
+          moduleCode: data.moduleCode.trim(),
+          moduleName: data.moduleName.trim(),
+          position: index + 1,
+        })),
+      });
+    } catch (e) {
+      console.error("DB/API error in POST /eduhub/flashcard-sets/generate:", e);
+
+      return res.status(503).json({
+        message: "Failed to generate flashcards.",
+        error: "Service unavailable.",
+      });
+    }
+  },
+);
+
+app.post("/eduhub/flashcard-sets", async (req: Request, res: Response) => {
+  const parsed = EduHubCreateFlashcardSetSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Invalid flashcard set data",
+      error: parsed.error.flatten(),
+    });
+  }
+
+  const data = parsed.data;
+
+  try {
+    const result = await pool.query(
+      `
+      INSERT INTO eduhub_flashcard_sets (
+        id,
+        module_code,
+        module_name,
+        exam_entry_id,
+        created_by_user_id,
+        created_by_username,
+        created_at,
+        updated_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
+      RETURNING *
+      `,
+      [
+        crypto.randomUUID(),
+        data.moduleCode.trim(),
+        data.moduleName.trim(),
+        data.examEntryId ?? null,
+        data.createdByUserId.trim(),
+        data.createdByUsername.trim(),
+      ],
+    );
+
+    return res.status(201).json(mapEduHubFlashcardSetRow(result.rows[0]));
+  } catch (e) {
+    console.error("DB error in POST /eduhub/flashcard-sets:", e);
+    return res.status(503).json({
+      message: "Failed to create flashcard set",
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.get("/eduhub/flashcard-sets", async (req: Request, res: Response) => {
+  const createdByUserId = String(req.query.createdByUserId ?? "").trim();
+  const moduleCode = String(req.query.moduleCode ?? "").trim();
+  const examEntryId = String(req.query.examEntryId ?? "").trim();
+
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT *
+      FROM eduhub_flashcard_sets
+      WHERE ($1 = '' OR created_by_user_id = $1)
+        AND ($2 = '' OR module_code = $2)
+        AND ($3 = '' OR exam_entry_id = NULLIF($3, '')::uuid)
+      ORDER BY updated_at DESC, created_at DESC
+      `,
+      [createdByUserId, moduleCode, examEntryId],
+    );
+
+    return res.json(rows.map(mapEduHubFlashcardSetRow));
+  } catch (e) {
+    console.error("DB error in GET /eduhub/flashcard-sets:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.get("/eduhub/flashcard-sets/:id", async (req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT *
+      FROM eduhub_flashcard_sets
+      WHERE id = $1
+      LIMIT 1
+      `,
+      [req.params.id],
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        message: "Flashcard set not found",
+      });
+    }
+
+    return res.json(mapEduHubFlashcardSetRow(rows[0]));
+  } catch (e) {
+    console.error("DB error in GET /eduhub/flashcard-sets/:id:", e);
+    return res.status(503).json({
+      error: "Database unavailable.",
+    });
+  }
+});
+
+app.delete(
+  "/eduhub/flashcard-sets/:id",
+  async (req: Request, res: Response) => {
+    try {
+      const result = await pool.query(
+        `
+      DELETE FROM eduhub_flashcard_sets
+      WHERE id = $1
+      RETURNING *
+      `,
+        [req.params.id],
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({
+          message: "Flashcard set not found",
+        });
+      }
+
+      return res.json({
+        ok: true,
+        deletedId: result.rows[0].id,
+      });
+    } catch (e) {
+      console.error("DB error in DELETE /eduhub/flashcard-sets/:id:", e);
+      return res.status(503).json({
+        error: "Database unavailable.",
+      });
+    }
+  },
+);
+
+const EduHubAskAISchema = z.object({
+  message: z.string().min(2).max(4000),
+  messages: z
+    .array(
+      z.object({
+        role: z.union([z.literal("assistant"), z.literal("user")]),
+        text: z.string().min(1).max(4000),
+      }),
+    )
+    .max(20)
+    .optional()
+    .default([]),
+});
+
+app.post("/eduhub/ask-ai", async (req: Request, res: Response) => {
+  const parsed = EduHubAskAISchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    return res.status(400).json({
+      message: "Invalid AI request",
+      error: parsed.error.flatten(),
+    });
+  }
+
+  const data = parsed.data;
+
+  try {
+    const systemPrompt = `
+You are EduHub AI, a helpful academic assistant for university students.
+Your job is to:
+- explain concepts simply
+- summarize topics clearly
+- generate MCQs with answers when asked
+- generate 5-mark or essay-style questions when asked
+- be concise but useful
+- avoid making up fake references
+- answer in a student-friendly style
+`;
+
+    const ollamaMessages = [
+      { role: "system", content: systemPrompt.trim() },
+      ...data.messages.map((item) => ({
+        role: item.role === "assistant" ? "assistant" : "user",
+        content: item.text,
+      })),
+      { role: "user", content: data.message },
+    ];
+
+    const ollamaResponse = await fetch("http://127.0.0.1:11434/api/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "llama3.2:3b",
+        messages: ollamaMessages,
+        stream: false,
+      }),
+    });
+
+    if (!ollamaResponse.ok) {
+      const text = await ollamaResponse.text();
+      console.error("Ollama error:", text);
+
+      return res.status(503).json({
+        message: "AI service is unavailable right now.",
+      });
+    }
+
+    const result: any = await ollamaResponse.json();
+
+    return res.json({
+      answer:
+        result?.message?.content?.trim() ||
+        "I could not generate a response right now.",
+    });
+  } catch (e) {
+    console.error("DB/API error in POST /eduhub/ask-ai:", e);
+
+    return res.status(503).json({
+      message: "AI service is unavailable right now.",
     });
   }
 });
@@ -1083,32 +4613,8 @@ app.post("/api/public/cases/me/messages", async (req: Request, res: Response) =>
 const port = Number(process.env.PORT || 4000);
 const host = "0.0.0.0";
 
-let lostFoundDbReady = false;
-
-ensureLostFoundTables()
-  .then(() => {
-    lostFoundDbReady = true;
-    console.log("Lost & Found DB tables ready.");
-  })
-  .catch((error) => {
-    console.error("Failed to initialize Lost & Found tables:", error);
-    console.error(
-      "Lost & Found DB is disabled until DATABASE_URL is fixed. API still starts for troubleshooting."
-    );
-  })
-  .finally(() => {
 app.listen(port, host, () => {
-  console.log(`API running on http://localhost:${port} (also http://0.0.0.0:${port})`);
-    });
-  });
-
-app.get("/lost-found/status", (_req: Request, res: Response) => {
-  if (!lostFoundDbReady) {
-    return res.status(503).json({
-      ok: false,
-      message:
-        "Lost & Found DB is not ready. Check apps/api/.env DATABASE_URL. Expected format: postgres://user:password@host:5432/dbname",
-    });
-  }
-  return res.json({ ok: true });
+  console.log(
+    `API running on http://localhost:${port} (also http://0.0.0.0:${port})`,
+  );
 });

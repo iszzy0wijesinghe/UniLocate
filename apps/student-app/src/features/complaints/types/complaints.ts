@@ -1,43 +1,46 @@
 export type ComplaintCategory =
-  | 'ragging'
-  | 'harassment'
-  | 'mental_health'
-  | 'discrimination'
-  | 'lecturer_behavior'
-  | 'other';
+  | "ragging"
+  | "harassment"
+  | "mental_health"
+  | "discrimination"
+  | "lecturer_behavior"
+  | "other";
 
-export type ComplaintSeverity = 'LOW' | 'MED' | 'HIGH' | 'CRITICAL';
+export type ComplaintSeverity = "LOW" | "MED" | "HIGH" | "CRITICAL";
 
 export type ComplaintStatus =
-  | 'NEW'
-  | 'IN_REVIEW'
-  | 'NEED_MORE_INFO'
-  | 'ACTION_TAKEN'
-  | 'CLOSED';
+  | "NEW"
+  | "IN_REVIEW"
+  | "NEED_MORE_INFO"
+  | "ACTION_TAKEN"
+  | "CLOSED";
 
-export type AssignmentTeam = 'GRIEVANCE' | 'DISCIPLINE' | 'COUNSELING';
+export type AssignmentTeam = "GRIEVANCE" | "DISCIPLINE" | "COUNSELING";
 
 export type ComplaintAttachment = {
   id: string;
-  caseId: string;
+  caseId?: string;
   messageId?: string;
-  storageKey: string;
+  storageKey?: string;
+  storagePath?: string;
   mimeType: string;
   sizeBytes: number;
   originalName: string;
-  scanStatus: 'pending' | 'clean' | 'flagged';
-  createdAt: string;
-  updatedAt: string;
+  scanStatus?: "pending" | "clean" | "flagged";
+  fileUrl?: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type ComplaintMessage = {
   id: string;
-  caseId: string;
-  senderType: 'STUDENT' | 'STAFF' | 'COUNSELOR';
-  senderLabel: string;
+  caseId?: string;
+  senderType: "STUDENT" | "STAFF" | "COUNSELOR";
+  senderLabel: string | null;
   body: string;
   createdAt: string;
-  updatedAt: string;
+  updatedAt?: string;
+  requestCounseling?: boolean;
   attachments: ComplaintAttachment[];
 };
 
@@ -60,9 +63,9 @@ export type ComplaintCase = {
   incidentAt?: string;
   peopleInvolved?: string;
   location?: { latitude: number; longitude: number };
-  counselingRequested: boolean;
-  identityDisclosed: boolean;
-  captchaRequired: boolean;
+  counselingRequested?: boolean;
+  identityDisclosed?: boolean;
+  captchaRequired?: boolean;
   assignedTeam?: AssignmentTeam;
   attachments: ComplaintAttachment[];
   messages: ComplaintMessage[];
@@ -73,16 +76,16 @@ export type ComplaintCase = {
 
 export type ComplaintSummary = Pick<
   ComplaintCase,
-  | 'id'
-  | 'anonId'
-  | 'title'
-  | 'category'
-  | 'description'
-  | 'severity'
-  | 'status'
-  | 'assignedTeam'
-  | 'createdAt'
-  | 'updatedAt'
+  | "id"
+  | "anonId"
+  | "title"
+  | "category"
+  | "description"
+  | "severity"
+  | "status"
+  | "assignedTeam"
+  | "createdAt"
+  | "updatedAt"
 >;
 
 export type AttachmentDraft = {
@@ -90,7 +93,7 @@ export type AttachmentDraft = {
   originalName: string;
   mimeType: string;
   sizeBytes: number;
-  uri?: string;
+  uri: string;
 };
 
 export type StoredComplaintSession = {
@@ -140,5 +143,14 @@ export type IdentityDisclosureInput = {
 export type SendMessageInput = {
   body: string;
   requestCounseling?: boolean;
-  attachments?: AttachmentDraft[];
+  attachmentIds?: string[];
+};
+
+export type UploadComplaintAttachmentResponse = {
+  id: string;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  storagePath?: string;
+  fileUrl: string;
 };
